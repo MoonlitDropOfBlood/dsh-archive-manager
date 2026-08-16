@@ -1,0 +1,70 @@
+name: Release 1.0
+
+# 打 v* 标签（如 v1.0.0）时构建插件包并发布为 GitHub Release。
+# 发布需要仓库 secret：GH_TOKEN（GitHub Personal Access Token，需 contents:write 权限）。
+# 也支持手动触发（workflow_dispatch）构建产物但不发布正式 Release（仅 artifact）。
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Package plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Syntax check
+        run: |
+          node --check index.js
+          node --check client.js
+          node --check typert.host.js
+
+      - name: Package tarball
+        run: npm pack
+        env:
+          npm_config_package_lock: "false"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-tarball
+          path: ./*.tgz
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}

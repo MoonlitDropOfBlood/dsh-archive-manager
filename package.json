@@ -1,0 +1,35 @@
+{
+  "name": "dsh-archive-manager",
+  "version": "1.0.0",
+  "description": "Archive manager for DeepSeek Harness: group archived sessions by project, newest-first, with search, restore and delete.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./typert": "./typert.host.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "typert.host.js"
+  ],
+  "license": "MIT",
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-storage-domain": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-typert-protocol": "^0.1.0-rc.6"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "scripts": {
+    "install:local": "node scripts/install.mjs"
+  }
+}
