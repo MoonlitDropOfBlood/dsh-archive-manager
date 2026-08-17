@@ -11,6 +11,7 @@
  * Usage:
  *   node scripts/install.mjs            # install into default profile (web)
  *   DSH_HOME=<path> node scripts/install.mjs
+ *   DSH_PROFILE=<name> node scripts/install.mjs
  */
 import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
@@ -29,7 +30,7 @@ const NODE_MODULES = join(PROFILE_DIR, "node_modules");
 const TARGET = join(NODE_MODULES, PKG_NAME);
 const PATCH_FILE = join(PROFILE_DIR, "cordis.patch.yml");
 
-/** Files shipped to the profile (everything except dev/ignored files). */
+/** Files shipped to the profile. */
 const SHIP = ["package.json", "index.js", "client.js", "typert.host.js"];
 
 function log(prefix, message) {
@@ -38,7 +39,9 @@ function log(prefix, message) {
 
 function pkgJson() {
   return JSON.parse(readFileSync(join(PROJECT_ROOT, "package.json"), "utf8"));
-}async function ensureProfile() {
+}
+
+async function ensureProfile() {
   await mkdir(NODE_MODULES, { recursive: true });
 }
 
@@ -52,50 +55,86 @@ async function copyPackage() {
   log("install", `copied plugin to ${TARGET}`);
 }
 
-/** Merge an `insert` row for the plugin into the profile patch (idempotent). */
+/** Build the insert block for the plugin. */
+function insertBlock() {
+  return (
+    "# --- dsh-archive-manager (managed by scripts/install.mjs) ---\n" +
+    "- insert:\n" +
+    "  - id: archive-manager\n" +
+    `    name: '${PKG_NAME}'\n`
+  );
+}
+
+/** True when the patch body is effectively empty (a bare `[]` or blank). */
+function isEmptyPatch(text) {
+  const body = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith("#"));
+  return body.length === 0 || (body.length === 1 && body[0] === "[]");
+}
+
+/**
+ * Merge an `insert` row for the plugin into the profile patch (idempotent).
+ * If the existing patch is an empty placeholder (`[]`), it is replaced so the
+ * file stays a single valid YAML list.
+ */
 async function ensurePatch() {
   let text = "";
   if (existsSync(PATCH_FILE)) {
     text = await readFile(PATCH_FILE, "utf8");
   }
-  const marker = `name: '${PKG_NAME}'`;
-  if (text.includes(marker)) {
+  if (text.includes(`name: '${PKG_NAME}'`)) {
     log("patch", "plugin row already present, skipping");
     return false;
   }
-  const insert = `
-# --- dsh-archive-manager (managed by scripts/install.mjs) ---
-- insert:
-  - id: archive-manager
-    name: '${PKG_NAME}'
-`;
-  // Reuse an existing trailing insert block if it is the only content, else append.
-  const trimmed = text.trimEnd();
-  const next = trimmed.length === 0 ? insert : trimmed + "\n" + insert;
-  await writeFile(PATCH_FILE, next, "utf8");
-  log("patch", `added mount row to ${PATCH_FILE}`);
+  const block = insertBlock();
+  if (isEmptyPatch(text)) {
+    await writeFile(PATCH_FILE, block, "utf8");
+    log("patch", `replaced empty patch in ${PATCH_FILE}`);
+  } else {
+    const trimmed = text.trimEnd();
+    const next = trimmed.length === 0 ? block : trimmed + "\n\n" + block;
+    await writeFile(PATCH_FILE, next, "utf8");
+    log("patch", `added mount row to ${PATCH_FILE}`);
+  }
   return true;
 }
 
-/** Best-effort dependency availability check. */
+/**
+ * Best-effort dependency availability check. DSH hoists shared deps to
+ * `<DSH_HOME>/profiles/node_modules`, so a module under the profile resolves
+ * them by walking up parent directories and probing `<dir>/node_modules`.
+ * Reproduce that chain from the profile directory upward.
+ */
 async function checkDeps() {
-  const deps = ["zod", "@deepseek-ai/cordis", "@deepseek-ai/dsh-typert-protocol", "@deepseek-ai/dsh-storage-domain"];
+  const deps = [
+    "zod",
+    "@deepseek-ai/cordis",
+    "@deepseek-ai/dsh-typert-protocol",
+    "@deepseek-ai/dsh-storage-domain",
+  ];
   const missing = [];
   for (const dep of deps) {
-    const candidates = [
-      join(NODE_MODULES, dep, "package.json"),
-      join(TARGET, "node_modules", dep, "package.json"),
-    ];
-    const found = candidates.some((p) => existsSync(p));
+    let found = false;
+    let dir = PROFILE_DIR;
+    for (let depth = 0; depth < 5 && !found; depth++) {
+      if (existsSync(join(dir, "node_modules", dep, "package.json"))) found = true;
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
     if (!found) missing.push(dep);
   }
   if (missing.length) {
     log("warn", `dependencies not resolvable from profile: ${missing.join(", ")}`);
     log(
       "warn",
-      `run "npm install" in ${PROJECT_ROOT} and copy node_modules into ${TARGET}, ` +
-        `or add the deps to the profile so DSH can resolve them.`
+      `install the deps into the profile (dsh plugin add / npm install) so DSH ` +
+        `can resolve them, then restart DSH.`
     );
+  } else {
+    log("ok", "dependencies resolvable from the DSH shared node_modules layer");
   }
 }
 
