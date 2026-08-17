@@ -60,13 +60,75 @@ window.__ModuleLoader__.load({
 .am-foot-layer.am-foot-rail .am-foot{width:36px;height:36px;padding:0;justify-content:center;border-radius:10px;}
 `;
 
-    function apply(ctx) {
+    // ---- Client Remote contribution ----------------------------------------
+    // The browser-side `remote.archiveManager` service only exists after this
+    // module mounts its namespace via ctx.remote.$mount(): dsh-api-remotes'
+    // client assembly mounts only the five official namespaces, so a plugin
+    // must mount its own. Mirrors the invocations in typert.host.js (ids,
+    // service/namespace/method, wire fields). zod is not requirable in the
+    // browser module loader, so codecs use passthrough schemas — the runtime
+    // contract only requires typeSymbol + schema.parse().
+    const passthrough = () => ({ parse: (v) => v });
+    const CLIENT_REMOTE = {
+      package: "dsh-archive-manager",
+      descriptors: [
+        {
+          id: "dsh-archive-manager#archiveManager/restore",
+          service: "archiveManager",
+          namespace: "archiveManager",
+          method: "restore",
+          invocation: { kind: "direct" },
+          parameters: [
+            {
+              name: "request",
+              wire: "request",
+              source: "json",
+              codec: { mode: "strict", typeSymbol: "dsh-archive-manager#ArchiveManagerRestoreRequest", schema: passthrough() },
+            },
+          ],
+          result: { mode: "strict", typeSymbol: "dsh-archive-manager#ArchiveManagerRestoreResult", schema: passthrough() },
+        },
+        {
+          id: "dsh-archive-manager#archiveManager/delete",
+          service: "archiveManager",
+          namespace: "archiveManager",
+          method: "delete",
+          invocation: { kind: "direct" },
+          parameters: [
+            {
+              name: "request",
+              wire: "request",
+              source: "json",
+              codec: { mode: "strict", typeSymbol: "dsh-archive-manager#ArchiveManagerDeleteRequest", schema: passthrough() },
+            },
+          ],
+          result: { mode: "strict", typeSymbol: "dsh-archive-manager#ArchiveManagerDeleteResult", schema: passthrough() },
+        },
+        {
+          id: "dsh-archive-manager#archiveManager/state",
+          service: "archiveManager",
+          namespace: "archiveManager",
+          method: "state",
+          invocation: { kind: "direct" },
+          parameters: [],
+          result: { mode: "strict", typeSymbol: "dsh-archive-manager#ArchiveManagerStateResult", schema: passthrough() },
+        },
+      ],
+    };
+
+    async function apply(ctx) {
+      // Mount the archiveManager namespace before anything touches it; the
+      // mount's lifetime is bound to this plugin's context by $mount itself.
+      await ctx.remote.$mount(CLIENT_REMOTE);
+
       const styleTag = document.createElement("style");
       styleTag.textContent = CSS;
       document.head.appendChild(styleTag);
       ctx.effect(() => () => styleTag.remove());
 
-      const remote = ctx.remote.archiveManager;
+      // ctx.get() reads the service without the property-accessor inject
+      // guard; it exists because the $mount above just created it.
+      const remote = ctx.get("remote.archiveManager");
 
       // Shared open state between the footer button and the overlay.
       let open = false;
@@ -347,7 +409,7 @@ window.__ModuleLoader__.load({
     }
 
     exports.apply = apply;
-    exports.inject = ["slots", "remote", "remote.archiveManager"];
+    exports.inject = ["slots", "remote"];
     return module.exports;
   },
 });
