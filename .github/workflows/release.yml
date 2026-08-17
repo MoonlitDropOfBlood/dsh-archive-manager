@@ -65,6 +65,25 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
+          body: |
+            ## 1.0.1 — 修复正式安装启动失败
+
+            ### 🐛 修复
+            - **Host 半**：为 `ArchiveManagerService` 补充显式构造函数 `super(ctx, "archiveManager")`。此前 cordis 类插件以 `new Callback(ctx, config)` 实例化时，配置对象被当作 Typert 服务键传入，`validateName` 校验抛错，导致 `archiveManager` 服务从未注册、客户端永远等待 `remote.archiveManager`（`web boot: 1 entry did not activate dsh-archive-manager`）。
+            - **Client 半**：通过 `ctx.remote.$mount()` 自行挂载 `archiveManager` Remote 命名空间。`dsh-api-remotes` 只挂载官方命名空间，第三方插件必须自行挂载，否则浏览器端注入的 `remote.archiveManager` 永远不会出现。
+            - **install 脚本**：正确处理空 `cordis.patch.yml` 占位符（`[]`），并修正依赖解析链检测。
+
+            ### ✅ 验证
+            - 隔离 DSH 实例端到端验证：插件正常激活，`state / restore / delete` 三个 Remote 方法均可通过网关调用。
+            - `--dump-config` 确认挂载行正确组合；本地 profile 已安装最新副本。
+
+            ### 📦 安装
+            ```bash
+            git clone git@github.com:MoonlitDropOfBlood/dsh-archive-manager.git
+            cd dsh-archive-manager
+            node scripts/install.mjs
+            # 重启 DSH 后，侧栏底部出现「归档」按钮
+            ```
           files: artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}

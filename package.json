@@ -1,6 +1,6 @@
 {
   "name": "dsh-archive-manager",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Archive manager for DeepSeek Harness: group archived sessions by project, newest-first, with search, restore and delete.",
   "type": "module",
   "main": "index.js",
