@@ -81,6 +81,20 @@ export class ArchiveManagerService extends TypertRemoteService {
   ];
 
   /**
+   * Cordis instantiates class plugins with `new Callback(ctx, config)` — the
+   * second argument is the plugin config, NOT the service key. `TypertRemoteService`
+   * has a `(ctx, serviceKey, options)` constructor that validates the key; without
+   * an explicit constructor here, `config` is passed as `serviceKey` and the
+   * `validateName` check throws during construction. As a result the `archiveManager`
+   * service was never registered, so the client stayed pending forever on
+   * `remote.archiveManager` (web boot: 1 entry did not activate). Match the official
+   * `MessageFeedbackService` pattern: pass the exact service key to `super()`.
+   */
+  constructor(ctx, config) {
+    super(ctx, "archiveManager");
+  }
+
+  /**
    * Cordis class-plugin initializer: runs right after construction, before the
    * service is published. Mark every Remote method and cache resolved config.
    */
