@@ -38,7 +38,7 @@ function makeCtx() {
 }
 
 class FixedArchiveManagerService extends TypertRemoteService {
-  static inject = ["workspaceRegistry", "storageDomain", "sessionPersistence", "sessionQuery", "shell", "sandboxPolicy", "sessions", "agents"];
+  static inject = ["workspaceRegistry", "storageDomain", "sessionPersistence", "sessionQuery", "sessions", "agents"];
   constructor(ctx, config) {
     super(ctx, "archiveManager");
   }

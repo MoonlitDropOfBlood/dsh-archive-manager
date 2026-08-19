@@ -13,7 +13,8 @@
  *     registry cache, the domain store and the `host/archived-sessions-changed`
  *     client frame in sync).
  *   - `delete`: refuse sessions whose agent is actually running, remove the
- *     session's durable log directory via the shell, then drop the archive
+ *     session's durable log directory with plain `node:fs` calls (fully
+ *     cross-platform: Windows, macOS, Linux), then drop the archive
  *     entry. Live-but-idle sessions keep their archive entry so they do not
  *     "revive" in the sidebar; the `state` call marks them as ghost.
  *   - `state`: report which archived sessions are still live in memory while
@@ -22,6 +23,8 @@
 
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { Service } from "@deepseek-ai/cordis";
+import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
 
 /**
  * Mark one instance method as a Remote export without relying on decorator
@@ -74,8 +77,6 @@ export class ArchiveManagerService extends TypertRemoteService {
     "storageDomain",
     "sessionPersistence",
     "sessionQuery",
-    "shell",
-    "sandboxPolicy",
     "sessions",
     "agents",
   ];
@@ -108,12 +109,6 @@ export class ArchiveManagerService extends TypertRemoteService {
   workspaceDomain() {
     const domain = this.ctx.get("storageDomain");
     return domain ? domain.get("workspace") : undefined;
-  }
-
-  /** The currently configured workspace-write root, for shell policy. */
-  workspaceRoot() {
-    const policy = this.ctx.get("sandboxPolicy");
-    return policy && typeof policy.workspaceRoot === "string" ? policy.workspaceRoot : "";
   }
 
   /**
@@ -152,21 +147,6 @@ export class ArchiveManagerService extends TypertRemoteService {
       }
     }
     return undefined;
-  }
-
-  /** Run a PowerShell command with full-access policy and return the result. */
-  async runShell(command) {
-    const shell = this.ctx.get("shell");
-    if (!shell || typeof shell.run !== "function") return undefined;
-    const spec = shell.resolve({
-      command,
-      timeoutMs: 15000,
-      sandboxPolicy: {
-        mode: "danger-full-access",
-        workspaceRoot: this.workspaceRoot(),
-      },
-    });
-    return await shell.run(spec);
   }
 
   /**
@@ -226,38 +206,20 @@ export class ArchiveManagerService extends TypertRemoteService {
     let removed = false;
     let fileError;
     if (location && location.path) {
-      const shell = this.ctx.get("shell");
-      if (!shell || typeof shell.run !== "function") {
-        fileError = "shell-unavailable";
-      } else {
-        try {
-          const p = String(location.path).replace(/'/g, "''");
-          const cmd =
-            "Remove-Item -Force -Recurse -ErrorAction SilentlyContinue -LiteralPath '" +
-            p +
-            "'; if (Test-Path -LiteralPath '" +
-            p +
-            "') { exit 1 } else { exit 0 }";
-          const result = await this.runShell(cmd);
-          if (result && result.exitCode === 0) removed = true;
-          else {
-            const denied = !!(result && result.sandbox && result.sandbox.denied);
-            let stderrText = "";
-            try {
-              stderrText =
-                result && result.stderr && typeof result.stderr.text === "string"
-                  ? result.stderr.text
-                  : "";
-            } catch {
-              stderrText = "";
-            }
-            fileError =
-              (denied ? "sandbox-denied" : "exit-" + (result ? result.exitCode : "unknown")) +
-              (stderrText ? " stderr: " + stderrText.slice(0, 300) : "");
-          }
-        } catch (error) {
-          fileError = String(error && error.message ? error.message : error);
-        }
+      const target = String(location.path);
+      try {
+        // Delete straight from the host process via node:fs — no shell, no
+        // PowerShell, no sandbox escalation, so this behaves identically on
+        // Windows, macOS and Linux. Composition plugins run in-process with
+        // the host's own privileges, which makes the sandbox ACL dance the
+        // previous shell-based implementation needed unnecessary. maxRetries
+        // absorbs transient Windows file locks (antivirus / indexers) and is
+        // a no-op elsewhere.
+        await rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+        removed = !existsSync(target);
+        if (!removed) fileError = "path-still-exists";
+      } catch (error) {
+        fileError = String(error && error.message ? error.message : error);
       }
     } else {
       removed = true; // no located artifact → already gone
@@ -291,69 +253,23 @@ export class ArchiveManagerService extends TypertRemoteService {
   async state() {
     const sessions = this.ctx.get("sessions");
     const sessionPersistence = this.ctx.get("sessionPersistence");
-    const shell = this.ctx.get("shell");
-    if (
-      !sessions ||
-      !sessionPersistence ||
-      typeof sessionPersistence.locate !== "function" ||
-      !shell ||
-      typeof shell.run !== "function"
-    ) {
+    if (!sessions || !sessionPersistence || typeof sessionPersistence.locate !== "function") {
       return { ok: true, value: { ghostIds: [] } };
     }
     const ids = readArchived.call(this, this.workspaceDomain());
-    const live = [];
+    const ghostIds = [];
     for (const id of ids) {
       try {
-        if (sessions.get(id) !== undefined) live.push(id);
-      } catch {
-        /* skip */
-      }
-    }
-    if (live.length === 0) return { ok: true, value: { ghostIds: [] } };
-    const paths = [];
-    const byPath = {};
-    for (const id of live) {
-      try {
         const session = sessions.get(id);
+        if (session === undefined) continue; // not live in memory → not a ghost
         const location = sessionPersistence.locate(session.header);
-        if (location && location.path) {
-          paths.push(location.path);
-          byPath[location.path] = id;
-        }
+        // Live but the log directory is gone → ghost the client hides.
+        if (location && location.path && !existsSync(String(location.path))) ghostIds.push(id);
       } catch {
         /* skip */
       }
     }
-    if (paths.length === 0) return { ok: true, value: { ghostIds: [] } };
-    const quoted = paths.map((p) => "'" + String(p).replace(/'/g, "''") + "'");
-    const cmd =
-      "$ps = @(" + quoted.join(",") + "); foreach ($p in $ps) { if (Test-Path -LiteralPath $p) { '1' } else { '0' } }";
-    try {
-      const result = await this.runShell(cmd);
-      if (!result || result.exitCode !== 0) return { ok: true, value: { ghostIds: [] } };
-      let text = "";
-      try {
-        text = result.stdout && typeof result.stdout.text === "string" ? result.stdout.text : "";
-      } catch {
-        text = "";
-      }
-      const lines = text
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter((l) => l === "0" || l === "1");
-      if (lines.length !== paths.length) return { ok: true, value: { ghostIds: [] } };
-      const missing = [];
-      for (let i = 0; i < paths.length; i++) {
-        if (lines[i] === "0") {
-          const id = byPath[paths[i]];
-          if (id !== undefined) missing.push(id);
-        }
-      }
-      return { ok: true, value: { ghostIds: missing } };
-    } catch {
-      return { ok: true, value: { ghostIds: [] } };
-    }
+    return { ok: true, value: { ghostIds } };
   }
 }
 

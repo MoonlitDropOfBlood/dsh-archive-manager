@@ -51,7 +51,7 @@ cordis 的 loader 会把**导出的 Service 类**当作"类插件"：`isConstruc
 
 ```js
 export class ArchiveManagerService extends TypertRemoteService {
-  static inject = ["workspaceRegistry", "storageDomain", "sessionPersistence", "sessionQuery", "shell", "sandboxPolicy", "sessions", "agents"];
+  static inject = ["workspaceRegistry", "storageDomain", "sessionPersistence", "sessionQuery", "sessions", "agents"];
   [Service.init]() {
     markRemoteMethod(this, "restore", "restore");
     markRemoteMethod(this, "delete", "delete");
@@ -127,9 +127,10 @@ DSH 插件通过 **cordis composition** 挂载，流程（`scripts/install.mjs` 
 ### 6. 删除会话的实现要点
 
 - **定位**：`sessionPersistence.locate(header)` → `{ path }`（会话日志目录，含 `session.jsonl.zstd` 及 `.bak`）。
-- **删除命令**：`Remove-Item -Force -Recurse -ErrorAction SilentlyContinue -LiteralPath '<path>'; if (Test-Path -LiteralPath '<path>') { exit 1 } else { exit 0 }`。
-  - **必须用 `Test-Path` 结果判断**，而不是依赖退出码：PowerShell 的 `-ErrorAction SilentlyContinue` 遇到被抑制的错误（如路径不存在）仍会把 `$?` 置 false，`pwsh -Command` 退出码会变成 1——即使删除成功。
-- **沙箱**：会话日志在 `~/.dsh`（工作区外），插件的 `ctx.shell` 若走默认 workspace-write 策略会被 ACL 拦截（`exit-1`）。必须显式传 `sandboxPolicy: { mode: "danger-full-access", workspaceRoot }`。
+- **删除**：直接用 `node:fs/promises` 的 `rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })`，再用 `existsSync` 验证。**跨平台**（Windows / macOS / Linux 行为一致），不拼任何 shell 命令。
+  - 历史上的 Windows-only 实现是通过 `shell` 服务拼 PowerShell（`Remove-Item` + `Test-Path`），并以 `sandboxPolicy: danger-full-access` 提升绕过沙箱——已废弃。composition 插件跑在 DSH 主进程内、自带完整 Node 权限，直接 `fs` 调用与当年的 `danger-full-access` 等效，且不再依赖 shell 服务 / pwsh 是否存在。
+  - `maxRetries` 用来吸收 Windows 上的瞬时文件锁（杀软 / 索引器），其他平台是 no-op。
+- **ghost 检测（`state`）**：逐条 `existsSync(locate(header).path)`——live 但日志目录不存在 → ghost。原来也是拼 PowerShell 批量 `Test-Path`，同样已换成 `node:fs`。
 - **正在运行**：只有 `agent.status === "running"` 才拒绝删除；`sessions.get(id)` 非空只表示"打开着"，允许删（idle 会话删日志后保留归档条目，作为 ghost，重启后彻底消失，避免在侧栏"复活"）。
 - **还原**：通过 `workspaceRegistry.setState({ ...state, archivedSessionIds: next })` 写回归档集合——一次调用同时持久化、同步 registry 缓存、并触发 `domain/changed` → 客户端 `host/archived-sessions-changed` 自动刷新。不要直接改 `~/.dsh/storages/workspace.json`（会绕过内存缓存导致不一致）。
 

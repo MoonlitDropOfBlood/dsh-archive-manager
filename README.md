@@ -30,6 +30,7 @@
 | 🧹 无效记录清理 | "日志已不存在"的残留归档记录单独分组，可一键清理 |
 | 👻 已删会话提示 | 已删除但仍驻留内存的会话自动隐藏，提示重启后彻底清除 |
 | 🌗 主题适配 | 全部使用 DSH 设计 token，明暗主题自动跟随 |
+| 🖥 跨平台 | Host 半只用 Node.js `fs` API，Windows / macOS / Linux 均可运行 |
 
 ## 安装
 
@@ -80,7 +81,7 @@ DSH Web UI
        └─ ctx.remote.archiveManager.{restore|delete|state}   ← Remote 调用
             └─ index.js (ArchiveManagerService, TypertRemoteService)
                  ├─ restore: workspaceRegistry.setState(移除归档) → 侧栏复原
-                 ├─ delete : 拒绝 running agent → Remove-Item 删日志 → 移除归档
+                 ├─ delete : 拒绝 running agent → fs.rm 删日志（跨平台）→ 移除归档
                  └─ state  : 检测"live 但日志已删"的 ghost 会话
 ```
 
