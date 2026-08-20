@@ -34,35 +34,21 @@
 
 ## 安装
 
-### 本地安装
+### 标准安装（推荐）
+
+本插件是**标准 DSH bundle**：`package.json` 声明 `dsh.bundle.patch`，包内自带 `cordis.patch.yml`，用官方 `dsh plugin` 命令安装：
 
 ```bash
-# 1. 克隆本仓库
-git clone git@github.com:MoonlitDropOfBlood/dsh-archive-manager.git
-cd dsh-archive-manager
+# 本地开发：pnpm 软链到本仓库，改代码即生效（无需重新复制）
+dsh plugin --profile web add /path/to/dsh-archive-manager
 
-# 2. 安装到本机 DSH profile（复制插件包 + 写入 cordis.patch.yml）
-node scripts/install.mjs
-
-# 3. 重启 DSH（命令行：node <dsh bin> web --profile web）
+# 正式发布：从 GitHub Release tarball 安装
+dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/v1.2.0/dsh-archive-manager-1.2.0.tgz
 ```
 
-重启后，侧栏底部（Cordis Plugin 下方、设置上方）会出现"归档"按钮。
+重启 DSH 后，侧栏底部（Cordis Plugin 下方、设置上方）会出现"归档"按钮。
 
-> 需要插件能在 profile 的 `node_modules` 解析到依赖（`zod`、`@deepseek-ai/cordis`、`@deepseek-ai/dsh-typert-protocol`、`@deepseek-ai/dsh-storage-domain`）。若本机 DSH 未提供这些依赖，先在插件目录 `npm install`，再手动把 `node_modules` 一并复制，或把插件作为依赖加入 profile。
-
-### 手动安装（原理）
-
-1. 将插件包放入 `<DSH_HOME>/profiles/web/node_modules/dsh-archive-manager/`。
-2. 在 `<DSH_HOME>/profiles/web/cordis.patch.yml` 追加：
-
-```yaml
-- insert:
-  - id: archive-manager
-    name: 'dsh-archive-manager'
-```
-
-3. 重启 DSH。
+> `dsh plugin add` 把插件装成 profile 的 npm 依赖并追加到 `dsh.profile.bundles`，启动时 DSH 自动应用包内的 `cordis.patch.yml` 挂载插件。卸载：`dsh plugin --profile web remove dsh-archive-manager`。
 
 ## 使用
 
@@ -92,7 +78,7 @@ dsh-archive-manager/
 ├── index.js            # Host 半：ArchiveManagerService（Remote 服务）
 ├── client.js           # Client 半：归档管理 UI bundle
 ├── typert.host.js      # Typert Host manifest（Remote 方法描述）
-├── scripts/install.mjs # 本地安装脚本
+├── cordis.patch.yml    # dsh bundle patch（挂载行）
 ├── .github/workflows/  # GitHub Actions 发布
 ├── AGENTS.md           # 面向 AI agent 的开发指南（含踩坑）
 └── LICENSE             # MIT
@@ -101,9 +87,8 @@ dsh-archive-manager/
 ## 开发
 
 ```bash
-node --check index.js
-node --check client.js
-node --check typert.host.js
+npm run check                    # node --check index.js client.js typert.host.js
+dsh plugin --profile web add /path/to/dsh-archive-manager   # 安装/重装到本机 DSH profile
 ```
 
 详见 [AGENTS.md](AGENTS.md)——记录了 DSH 正式插件（Host/Client/Typert 三件套）的完整机制和踩坑。

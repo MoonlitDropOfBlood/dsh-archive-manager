@@ -1,7 +1,8 @@
 name: Release 1.0
 
 # 打 v* 标签（如 v1.0.0）时构建插件包并发布为 GitHub Release。
-# 发布需要仓库 secret：GH_TOKEN（GitHub Personal Access Token，需 contents:write 权限）。
+# 发布凭证：优先用仓库 secret GH_TOKEN（PAT，contents:write），缺省回退内置
+# GITHUB_TOKEN（工作流已声明 permissions: contents: write）。
 # 也支持手动触发（workflow_dispatch）构建产物但不发布正式 Release（仅 artifact）。
 on:
   workflow_dispatch:
@@ -66,25 +67,18 @@ jobs:
           prerelease: false
           generate_release_notes: true
           body: |
-            ## 1.1.0 — 跨平台支持：移除 Windows 专属实现
+            ## ${{ github.ref_name }} — 标准 DSH bundle 安装
 
-            ### 🖥 跨平台
-            - **Host 半全面去 PowerShell 化**：`delete` 与 `state` 此前通过 `shell` 服务拼 PowerShell 命令（`Remove-Item` / `Test-Path`）删除会话日志、探测路径，仅在 Windows 可用。现改为直接使用 `node:fs`（`rm(recursive, force)` + `existsSync`），Windows / macOS / Linux 行为一致。
-            - 移除 `shell`、`sandboxPolicy` 两个服务依赖：composition 插件运行于 DSH 主进程内、自带完整 Node 权限，无需 shell 提权绕沙箱。
-            - `rm` 带 `maxRetries` / `retryDelay`，吸收 Windows 上杀软 / 索引器造成的瞬时文件锁。
-            - Remote 协议（`restore` / `delete` / `state` 出入参）零改动，Client 半与 Typert manifest 不受影响。
+            ### 🏗 标准 DSH bundle
+            - 迁移到官方 `dsh plugin` 安装机制：`package.json` 声明 `dsh.bundle.patch`，包内 `cordis.patch.yml` 提供挂载行；`dsh plugin add` 自动把包加入 `dsh.profile.bundles`。
+            - 移除 `scripts/install.mjs`（复制包 + 手改 patch 的旧方式），卸载/更新走 `dsh plugin remove` / 重新 `add`。
+            - 安装流程：`dsh plugin --profile web add <本地路径或 tarball URL>`；本地路径为 `link:` 软链，改代码即生效。
 
-            ### ✅ 验证
-            - `node --check` 三个插件文件通过；新增 `scripts/smoke-fs.test.mjs` 独立冒烟测试（7/7 PASS）。
-            - 构造函数 / Remote 标记校验通过；本地 profile 已安装最新副本并核对一致。
-
-            ### 📦 安装
+            ### 📦 安装（标准 DSH bundle）
             ```bash
-            git clone git@github.com:MoonlitDropOfBlood/dsh-archive-manager.git
-            cd dsh-archive-manager
-            node scripts/install.mjs
+            dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/v1.2.0/dsh-archive-manager-1.2.0.tgz
             # 重启 DSH 后，侧栏底部出现「归档」按钮
             ```
           files: artifacts/*
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
