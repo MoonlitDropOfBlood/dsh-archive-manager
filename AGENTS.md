@@ -120,7 +120,7 @@ DSH 插件通过 **cordis composition** 挂载。本插件是**标准 DSH bundle
 # cordis.patch.yml（随包分发）
 - insert:
   - id: archive-manager
-    name: 'dsh-archive-manager'
+    name: '@duke-dsh-plugins/dsh-archive-manager'
 ```
 
 3. 重启 DSH（`node <dsh bin> web --profile web`）。**必须重启**，Host 加载、typert 注册、client bundle 注入都在启动时发生。
