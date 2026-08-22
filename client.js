@@ -201,7 +201,7 @@ window.__ModuleLoader__.load({
       function ArchiveIcon() {
         return React.createElement(
           "svg",
-          { width: 14, height: 14, viewBox: "0 0 14 14", fill: "none", stroke: "currentColor", strokeWidth: 1.1, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
+          { width: 16, height: 16, viewBox: "0 0 14 14", fill: "none", stroke: "currentColor", strokeWidth: 1.1, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
           React.createElement("rect", { x: 1.5, y: 2, width: 11, height: 3.5, rx: 0.8 }),
           React.createElement("path", { d: "M2.5 5.5v5a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-5" }),
           React.createElement("path", { d: "M5.5 8h3" })
