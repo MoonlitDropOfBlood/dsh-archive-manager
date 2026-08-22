@@ -67,16 +67,16 @@ jobs:
           prerelease: false
           generate_release_notes: true
           body: |
-            ## ${{ github.ref_name }} — 标准 DSH bundle 安装
+            ## ${{ github.ref_name }} — 工作区风格归档面板
 
-            ### 🏗 标准 DSH bundle
-            - 迁移到官方 `dsh plugin` 安装机制：`package.json` 声明 `dsh.bundle.patch`，包内 `cordis.patch.yml` 提供挂载行；`dsh plugin add` 自动把包加入 `dsh.profile.bundles`。
-            - 移除 `scripts/install.mjs`（复制包 + 手改 patch 的旧方式），卸载/更新走 `dsh plugin remove` / 重新 `add`。
-            - 安装流程：`dsh plugin --profile web add <本地路径或 tarball URL>`；本地路径为 `link:` 软链，改代码即生效。
+            ### 🎨 界面重构
+            - 弹出面板改为与 DSH 工作区一致的视觉：对话框表面（24px 圆角、`bg-layer-2`、`shadow-lv3`），面板宽度对齐设置页面（800px）。
+            - 会话行缩进在分组头之下，呈树形层级；操作按钮（还原/删除）改为 hover 显示。
+            - 分组默认收起，可点击展开/收起；搜索时自动展开匹配分组。
 
             ### 📦 安装（标准 DSH bundle）
             ```bash
-            dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/v1.2.0/dsh-archive-manager-1.2.0.tgz
+            dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/v1.3.0/dsh-archive-manager-1.3.0.tgz
             # 重启 DSH 后，侧栏底部出现「归档」按钮
             ```
           files: artifacts/*

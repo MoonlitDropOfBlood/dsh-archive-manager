@@ -43,7 +43,7 @@
 dsh plugin --profile web add /path/to/dsh-archive-manager
 
 # 正式发布：从 GitHub Release tarball 安装
-dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/v1.2.0/dsh-archive-manager-1.2.0.tgz
+dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/v1.3.0/dsh-archive-manager-1.3.0.tgz
 ```
 
 重启 DSH 后，侧栏底部（Cordis Plugin 下方、设置上方）会出现"归档"按钮。

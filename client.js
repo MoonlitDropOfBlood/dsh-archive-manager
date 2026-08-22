@@ -5,6 +5,11 @@
  *   - a sidebar footer action button (archived-session entry),
  *   - a frame-wide archive manager panel (search / group / restore / delete).
  *
+ * The panel mirrors the DSH 工作区 (workspace) browsing region: a dialog
+ * surface using the same design tokens as the workspace browser — folder
+ * group headers, compact 32px session rows with a leading slot icon and
+ * relative time, and hover-revealed actions (workspace rowActions pattern).
+ *
  * Host communication goes through the `archiveManager` Remote namespace
  * (`ctx.remote.archiveManager.restore/delete/state`), published by the Host
  * half in `index.js`.
@@ -17,38 +22,73 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const React = require("react");
 
-    // ---- CSS (package-owned, mirrors DSH design tokens) --------------------
+    // ---- CSS (package-owned, mirrors the DSH workspace browser + Modal) ----
     const CSS = `
 [class*="footerActions"]{flex-direction:column;align-items:center;}
-.am-overlay{position:fixed;inset:0;z-index:2147483000;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.4));display:flex;align-items:center;justify-content:center;padding:24px;}
-.am-panel{width:min(640px,92vw);max-height:80vh;display:flex;flex-direction:column;background:var(--dsw-specific-input-major,#fff);color:var(--dsw-alias-label-primary,inherit);border:1px solid var(--dsw-alias-border-l2-darkmode-thin,rgba(128,128,128,.2));border-radius:20px;box-shadow:var(--dsw-shadow-lv2,0 12px 40px rgba(0,0,0,.25));overflow:hidden;}
-.am-header{display:flex;align-items:center;gap:10px;padding:20px 20px 12px;}
-.am-title{font-weight:600;font-size:16px;flex:1;color:var(--dsw-alias-label-primary,inherit);line-height:24px;}
-.am-count{font-size:12px;color:var(--dsw-alias-label-tertiary,inherit);line-height:16px;}
-.am-close{border:none;background:transparent;cursor:pointer;font-size:15px;width:28px;height:28px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary,inherit);padding:0;}
+
+/* Overlay — same mask surface as DSH Modal */
+.am-overlay{position:fixed;inset:0;z-index:2147483000;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.4));backdrop-filter:var(--dsw-mask-blur,blur(2px));display:flex;align-items:center;justify-content:center;padding:24px;}
+
+/* Panel — same surface & size as the DSH Settings dialog (width 800px) */
+.am-panel{position:relative;display:flex;flex-direction:column;width:800px;max-width:calc(100vw - 48px);height:min(800px,100vh - 48px);overflow:hidden;border:1px solid var(--dsw-alias-border-inverted,rgba(128,128,128,.3));border-radius:24px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,inherit);box-shadow:var(--dsw-shadow-lv3,0 12px 40px rgba(0,0,0,.25));}
+
+/* Header — DSH Modal header */
+.am-header{display:flex;align-items:center;gap:10px;padding:18px 14px 10px 24px;}
+.am-title{font-weight:500;font-size:16px;line-height:24px;flex:1;color:var(--dsw-alias-label-primary,inherit);}
+.am-count{font-size:12px;line-height:16px;color:var(--dsw-alias-label-tertiary,inherit);flex:none;}
+.am-close{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:8px;background:transparent;cursor:pointer;color:var(--dsw-alias-label-secondary,inherit);padding:0;}
 .am-close:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));color:var(--dsw-alias-label-primary,inherit);}
-.am-search{padding:0 20px 12px;border-bottom:1px solid var(--dsw-alias-border-l1,rgba(128,128,128,.15));}
-.am-search input{width:100%;box-sizing:border-box;padding:8px 12px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.2));background:var(--dsw-alias-bg-layer-1,transparent);color:var(--dsw-alias-label-primary,inherit);font-size:13px;line-height:20px;outline:none;}
+
+/* Search — workspace expanded search input */
+.am-search{padding:0 24px 12px;}
+.am-search input{box-sizing:border-box;width:100%;height:30px;padding:0 12px;border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.2));border-radius:10px;background:transparent;color:var(--dsw-alias-label-primary,inherit);font-size:13px;line-height:18px;outline:none;}
+.am-search input::placeholder{color:var(--dsw-alias-label-tertiary,inherit);}
 .am-search input:focus{border-color:var(--dsw-alias-brand-primary,#4a7dff);}
-.am-body{flex:1;overflow-y:auto;padding:8px 14px 16px;overscroll-behavior:contain;}
-.am-group{margin-top:8px;}
-.am-group-head{display:flex;align-items:baseline;gap:8px;padding:8px 6px 4px;font-weight:500;font-size:12px;color:var(--dsw-alias-label-secondary,inherit);}
-.am-group-count{font-size:11px;color:var(--dsw-alias-label-tertiary,inherit);font-weight:400;}
-.am-row{display:flex;align-items:center;gap:10px;padding:9px 8px;border-radius:10px;}
+
+/* Body — workspace list area */
+.am-body{flex:1;overflow-y:auto;padding:4px 8px 16px;overscroll-behavior:contain;}
+
+/* Group sections, spaced like workspace group sections */
+.am-group{margin-top:2px;}
+.am-group+.am-group{margin-top:4px;}
+
+/* Group head — workspace project row (folder + label + count), clickable + collapsible */
+.am-group-head{box-sizing:border-box;display:flex;align-items:center;gap:6px;height:34px;width:100%;padding:0 8px;border-radius:8px;border:none;background:transparent;color:inherit;font-family:inherit;font-size:inherit;text-align:left;cursor:pointer;}
+.am-group-head:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.08));}
+.am-chevron{flex:none;width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary,inherit);transition:transform .15s var(--ds-ease-in-out);}
+.am-chevron.am-open{transform:rotate(90deg);}
+.am-group-icon{flex:none;width:16px;height:20px;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary,inherit);}
+.am-group-label{flex:1;min-width:0;font-size:14px;line-height:20px;color:var(--dsw-alias-label-primary,inherit);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.am-group-count{flex:none;font-size:12px;line-height:20px;color:var(--dsw-alias-label-tertiary,inherit);}
+
+/* Session row — workspace session row (32px, radius 8, hover bg), indented under its group */
+.am-row{display:flex;align-items:center;gap:6px;height:32px;padding:0 8px 0 32px;border-radius:8px;color:var(--dsw-alias-label-primary,inherit);}
 .am-row:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.08));}
-.am-row-main{flex:1;min-width:0;}
-.am-row-title{font-size:13px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary,inherit);}
-.am-row-meta{font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary,inherit);margin-top:2px;}
-.am-btn{border:none;background:transparent;color:var(--dsw-alias-brand-primary,#4a7dff);font-size:12px;line-height:18px;padding:4px 10px;border-radius:8px;cursor:pointer;white-space:nowrap;}
+.am-slot{flex:none;width:16px;height:20px;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary,inherit);}
+.am-title{flex:1;min-width:0;font-size:14px;line-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.am-time{flex:none;font-size:12px;line-height:20px;color:var(--dsw-alias-label-tertiary,inherit);}
+.am-row-actions{flex:none;display:none;align-items:center;gap:2px;}
+.am-row:hover .am-time{display:none;}
+.am-row:hover .am-row-actions{display:inline-flex;}
+
+/* Action buttons — subtle text buttons, hover-revealed like workspace rowActions */
+.am-btn{border:none;background:transparent;font-size:12px;line-height:18px;padding:4px 8px;border-radius:8px;cursor:pointer;white-space:nowrap;}
 .am-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));}
 .am-btn-restore{color:var(--dsw-alias-brand-primary,#4a7dff);}
 .am-btn-danger{color:var(--dsw-alias-state-error-primary,#e5484d);}
 .am-btn-danger:hover{background:var(--dsw-alias-interactive-bg-hover-danger,rgba(229,72,77,.1));}
 .am-btn[disabled]{opacity:.5;cursor:default;}
-.am-empty{text-align:center;padding:40px 16px;color:var(--dsw-alias-label-tertiary,inherit);font-size:13px;line-height:20px;}
-.am-error{padding:8px 14px;margin:8px 14px;border-radius:10px;background:var(--dsw-alias-interactive-bg-hover-danger,rgba(229,72,77,.08));color:var(--dsw-alias-state-error-primary,#e5484d);font-size:12px;line-height:18px;}
-.am-orphan{opacity:.75;}
-.am-ghost{padding:8px 12px;margin:4px 14px 8px;border-radius:10px;background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.08));color:var(--dsw-alias-label-tertiary,inherit);font-size:12px;line-height:18px;}
+
+/* Orphan rows (log gone) */
+.am-orphan .am-slot{color:var(--dsw-alias-state-warn-primary,#d99a06);}
+.am-orphan .am-title{color:var(--dsw-alias-label-secondary,inherit);}
+
+/* Empty / error / ghost — workspace empty style */
+.am-empty{color:var(--dsw-alias-label-tertiary,inherit);padding:16px 12px;font-size:13px;line-height:20px;text-align:center;}
+.am-error{color:var(--dsw-alias-state-error-primary,#e5484d);padding:8px 24px;font-size:12px;line-height:18px;}
+.am-ghost{color:var(--dsw-alias-label-secondary,inherit);padding:8px 24px;font-size:12px;line-height:18px;}
+
+/* Sidebar footer entry (unchanged) */
 .am-foot-layer{flex:none;width:100%;margin:8px 0 0;display:flex;align-items:center;}
 .am-foot-layer .am-foot{width:100%;height:49px;border-radius:12px;padding:0 8px 0 6px;display:inline-flex;align-items:center;gap:8px;background:transparent;border:none;color:var(--dsw-alias-label-primary,inherit);font-family:inherit;font-size:14px;cursor:pointer;overflow:hidden;}
 .am-foot-layer .am-foot:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.1));}
@@ -168,6 +208,32 @@ window.__ModuleLoader__.load({
         );
       }
 
+      function FolderIcon() {
+        return React.createElement(
+          "svg",
+          { width: 16, height: 16, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.3, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
+          React.createElement("path", { d: "M1.5 4.5a1 1 0 0 1 1-1h3l1.5 2h6.5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7Z" })
+        );
+      }
+
+      function WarningIcon() {
+        return React.createElement(
+          "svg",
+          { width: 16, height: 16, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.3, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
+          React.createElement("path", { d: "M8 2.5 14.5 13.5h-13L8 2.5Z" }),
+          React.createElement("path", { d: "M8 6.5v3" }),
+          React.createElement("circle", { cx: 8, cy: 11.5, r: 0.4, fill: "currentColor" })
+        );
+      }
+
+      function ChevronIcon() {
+        return React.createElement(
+          "svg",
+          { width: 14, height: 14, viewBox: "0 0 14 14", fill: "none", stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
+          React.createElement("path", { d: "m5 3.5 3.5 3.5L5 10.5" })
+        );
+      }
+
       function fmtTime(ts) {
         if (typeof ts !== "number" || !isFinite(ts) || ts <= 0) return "";
         const diff = Date.now() - ts;
@@ -238,6 +304,9 @@ window.__ModuleLoader__.load({
         const [busy, setBusy] = React.useState(null);
         const [confirming, setConfirming] = React.useState(null);
         const [error, setError] = React.useState(null);
+        // Groups are collapsed by default so a large archive stays manageable;
+        // a non-empty search query force-expands every group to show matches.
+        const [expanded, setExpanded] = React.useState(() => new Set());
         const ghostIds = useGhostIds();
         const rawArchivedIds = slotProps.useWorkspaces((s) => s.archivedSessionIds);
         const byId = slotProps.useSessions((s) => s.byId);
@@ -285,6 +354,15 @@ window.__ModuleLoader__.load({
         if (derived.orphans.length > 0) {
           groups.push({ key: "__orphan__", label: "无效的归档记录", orphanGroup: true, sessions: derived.orphans });
         }
+        const searching = query.trim() !== "";
+        const isExpanded = (key) => searching || expanded.has(key);
+        const toggleGroup = (key) => {
+          setExpanded((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key); else next.add(key);
+            return next;
+          });
+        };
         const empty = total === 0 && ghostIds.length === 0;
         const allGhost = total === 0 && ghostIds.length > 0;
         const header = React.createElement(
@@ -316,39 +394,61 @@ window.__ModuleLoader__.load({
                     React.createElement(
                       "div", { className: "am-group", key: g.key },
                       React.createElement(
-                        "div", { className: "am-group-head" },
-                        React.createElement("span", null, g.label),
+                        "button", {
+                          type: "button",
+                          className: "am-group-head",
+                          onClick: () => toggleGroup(g.key),
+                          "aria-expanded": isExpanded(g.key),
+                        },
+                        React.createElement(
+                          "span", { className: "am-chevron" + (isExpanded(g.key) ? " am-open" : ""), "aria-hidden": true },
+                          React.createElement(ChevronIcon)
+                        ),
+                        React.createElement(
+                          "span", { className: "am-group-icon", "aria-hidden": true },
+                          g.orphanGroup ? React.createElement(WarningIcon) : React.createElement(FolderIcon)
+                        ),
+                        React.createElement("span", { className: "am-group-label" }, g.label),
                         React.createElement("span", { className: "am-group-count" }, g.sessions.length + " 个")
                       ),
-                      g.sessions.map((s) => {
+                      isExpanded(g.key) ? g.sessions.map((s) => {
                         const restoring = busy === "restore:" + s.id;
                         const deleting = busy === "delete:" + s.id;
                         const isConfirm = confirming === s.id;
                         const isOrphan = s.orphan === true;
-                        return React.createElement(
-                          "div", { className: "am-row" + (isOrphan ? " am-orphan" : ""), key: s.id },
-                          React.createElement(
-                            "div", { className: "am-row-main" },
-                            React.createElement("div", { className: "am-row-title" }, isOrphan ? "未知会话（日志已不存在）" : (s.displayTitle || s.title || "未命名会话")),
-                            React.createElement("div", { className: "am-row-meta" }, isOrphan ? s.id : (fmtTime(s.updatedAt) + (s.cwd ? " · " + s.cwd : "")))
-                          ),
-                          isOrphan
-                            ? null
-                            : React.createElement("button", {
-                                className: "am-btn am-btn-restore",
-                                disabled: !!busy,
-                                onClick: () => runAction("restore", s.id),
-                              }, restoring ? "…" : "还原"),
-                          React.createElement("button", {
-                            className: "am-btn am-btn-danger",
+                        const timeLabel = isOrphan ? s.id : fmtTime(s.updatedAt);
+                        const titleAttr = isOrphan ? s.id : (s.cwd || undefined);
+                        const actions = [];
+                        if (!isOrphan) {
+                          actions.push(React.createElement("button", {
+                            key: "restore",
+                            type: "button",
+                            className: "am-btn am-btn-restore",
                             disabled: !!busy,
-                            onClick: () => {
-                              if (isConfirm) { setConfirming(null); runAction("delete", s.id); }
-                              else { setConfirming(s.id); }
-                            },
-                          }, deleting ? "…" : (isConfirm ? "确认删除?" : "删除"))
+                            onClick: () => runAction("restore", s.id),
+                          }, restoring ? "…" : "还原"));
+                        }
+                        actions.push(React.createElement("button", {
+                          key: "delete",
+                          type: "button",
+                          className: "am-btn am-btn-danger",
+                          disabled: !!busy,
+                          onClick: () => {
+                            if (isConfirm) { setConfirming(null); runAction("delete", s.id); }
+                            else { setConfirming(s.id); }
+                          },
+                        }, deleting ? "…" : (isConfirm ? "确认删除?" : "删除")));
+                        return React.createElement(
+                          "div", { className: "am-row" + (isOrphan ? " am-orphan" : ""), key: s.id, title: titleAttr },
+                          React.createElement(
+                            "span", { className: "am-slot", "aria-hidden": true },
+                            isOrphan ? React.createElement(WarningIcon) : React.createElement(ArchiveIcon)
+                          ),
+                          React.createElement("span", { className: "am-title" }, isOrphan ? "未知会话（日志已不存在）" : (s.displayTitle || s.title || "未命名会话")),
+                          React.createElement("span", { className: "am-time" }, timeLabel),
+                          React.createElement("span", { className: "am-row-actions" }, actions)
                         );
-                      })
+                      }) : null
                     )
                 )
         );
