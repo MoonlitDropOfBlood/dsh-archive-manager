@@ -76,7 +76,7 @@ const _archiveManager_delete_parameter_0$schema = z.object({
 });
 
 export const TYPERT = {
-  package: "dsh-archive-manager",
+  package: "@duke-dsh-plugins/dsh-archive-manager",
   face: "host",
   schemas: [],
   invocations: [
