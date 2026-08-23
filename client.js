@@ -15,7 +15,7 @@
  * half in `index.js`.
  */
 window.__ModuleLoader__.load({
-  id: "dsh-archive-manager",
+  id: "@duke-dsh-plugins/dsh-archive-manager",
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;

@@ -1,6 +1,6 @@
 {
   "name": "@duke-dsh-plugins/dsh-archive-manager",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "Archive manager for DeepSeek Harness: group archived sessions by project, newest-first, with search, restore and delete.",
   "repository": {
     "type": "git",
