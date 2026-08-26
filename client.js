@@ -3,7 +3,10 @@
  *
  * Rendered by the DSH web shell via `window.__ModuleLoader__.load`. Registers:
  *   - a sidebar footer action button (archived-session entry),
- *   - a frame-wide archive manager panel (search / group / restore / delete).
+ *   - a frame-wide archive manager panel (search / group / restore / delete),
+ *     rendered together with the button from the sidebar.footer.action slot —
+ *     mirroring how ui-settings renders its modal from sidebar.settings (see
+ *     the registration comment for the stacking-context rationale).
  *
  * The panel mirrors the DSH 工作区 (workspace) browsing region: a dialog
  * surface using the same design tokens as the workspace browser — folder
@@ -26,8 +29,15 @@ window.__ModuleLoader__.load({
     const CSS = `
 [class*="footerActions"]{flex-direction:column;align-items:center;}
 
-/* Overlay — same mask surface as DSH Modal */
-.am-overlay{position:fixed;inset:0;z-index:2147483000;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.4));backdrop-filter:var(--dsw-mask-blur,blur(2px));display:flex;align-items:center;justify-content:center;padding:24px;}
+/* Overlay — same mask surface as DSH Modal, same z-index tier as the DSH
+   settings overlay (1000). This layer MUST be rendered from a slot that sits
+   outside any stacking context (the sidebar foot, like Settings does), never
+   from the shell.overlay slot: AppFrame renders that slot inside its
+   .overlayLayer (position:absolute;z-index:20, a stacking context), which
+   traps any child z-index below it — dsh-better-sidebar appends a
+   position:fixed;z-index:25 layer to document.body and would cover the
+   modal. */
+.am-overlay{position:fixed;inset:0;z-index:1000;background:var(--dsw-alias-bg-mask-1,rgba(0,0,0,.4));backdrop-filter:var(--dsw-mask-blur,blur(2px));display:flex;align-items:center;justify-content:center;padding:24px;}
 
 /* Panel — same surface & size as the DSH Settings dialog (width 800px) */
 .am-panel{position:relative;display:flex;flex-direction:column;width:800px;max-width:calc(100vw - 48px);height:min(800px,100vh - 48px);overflow:hidden;border:1px solid var(--dsw-alias-border-inverted,rgba(128,128,128,.3));border-radius:24px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,inherit);box-shadow:var(--dsw-shadow-lv3,0 12px 40px rgba(0,0,0,.25));}
@@ -465,7 +475,18 @@ window.__ModuleLoader__.load({
         );
       }
 
-      // Sidebar footer action entry (Cordis Plugin 下方、设置上方；纵向排列由注入 CSS 保证)。
+      // Sidebar footer action entry (Cordis Plugin 下方、设置上方；纵向排列由注入
+      // CSS 保证) + frame-wide archive manager panel.
+      //
+      // 弹窗为什么从这里渲染而不是 `shell.overlay`：AppFrame 把 `shell.overlay`
+      // 渲染在 `.overlayLayer`（position:absolute; z-index:20）内，该层形成独立
+      // stacking context，把子元素 z-index 锁死在其下；而 dsh-better-sidebar 把
+      // 整层 append 到 document.body（position:fixed; z-index:25），归档弹窗因此
+      // 会被它盖住。设置弹窗（ui-settings）的做法是把全屏 fixed 遮罩
+      // （z-index:1000）从 sidebar.settings 槽渲染——侧栏列不构成 stacking
+      // context，fixed 层直接参与根 stacking context，压过 better-sidebar 的 25。
+      // 这里照搬同一做法：弹窗与按钮同从 sidebar.footer.action 槽渲染，两者共享
+      // useOpen 状态，UI 行为不变。
       ctx.slots.inject("sidebar.footer.action", () => ctx.slots.register(
         { name: "sidebar.footer.action", id: "archive-manager", order: 500, label: () => "归档" },
         (props) => {
@@ -481,7 +502,7 @@ window.__ModuleLoader__.load({
           children.push(React.createElement("span", { key: "icon", className: "am-foot-icon", "aria-hidden": true }, React.createElement(ArchiveIcon)));
           if (wide) children.push(React.createElement("span", { key: "label", className: "am-foot-label" }, "归档"));
           if (wide && safeCount > 0) children.push(React.createElement("span", { key: "cnt", className: "am-badge" }, String(safeCount)));
-          return React.createElement(
+          const button = React.createElement(
             "div", { className: "am-foot-layer" + (wide ? "" : " am-foot-rail") },
             React.createElement("button", {
               type: "button",
@@ -491,19 +512,13 @@ window.__ModuleLoader__.load({
               className: "am-foot" + (isOpen ? " am-active" : ""),
             }, children)
           );
-        }
-      ));
-
-      // Frame-wide archive manager panel.
-      ctx.slots.inject("shell.overlay", () => ctx.slots.register(
-        { name: "shell.overlay", id: "archive-manager", order: 200 },
-        (props) => {
-          const isOpen = useOpen();
-          if (!isOpen) return null;
-          return React.createElement(
-            "div", { className: "am-overlay", onClick: () => setOpen(false) },
-            React.createElement(ArchiveManager, { slotProps: props, onClose: () => setOpen(false) })
-          );
+          const overlay = isOpen
+            ? React.createElement(
+                "div", { className: "am-overlay", onClick: () => setOpen(false) },
+                React.createElement(ArchiveManager, { slotProps: props, onClose: () => setOpen(false) })
+              )
+            : null;
+          return [button, overlay];
         }
       ));
     }

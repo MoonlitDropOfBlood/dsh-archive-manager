@@ -156,6 +156,7 @@ dsh plugin --profile web add /path/to/dsh-archive-manager   # 安装/重装到�
 
 ## 常规注意事项
 
+- **弹窗层级（z-index / stacking context）**：全屏弹窗**不要**注册到 `shell.overlay` 槽。AppFrame 把 `shell.overlay` 渲染在 `.overlayLayer`（`position:absolute; z-index:20`）内，该层形成独立 stacking context，子元素的 z-index 被锁死在其下；dsh-better-sidebar 会把整层 append 到 `document.body`（`position:fixed; z-index:25`），因此 `shell.overlay` 里的弹窗会被它盖住。**照抄 ui-settings 的做法**：把 `position:fixed; inset:0; z-index:1000` 的遮罩从侧栏 foot 槽（`sidebar.settings` / `sidebar.footer.action`）渲染——侧栏列不构成 stacking context，fixed 层直接参与根 stacking context，压过 better-sidebar 的 25。DSH 生态约定：shell overlay = 20、better-sidebar = 25、ui-cordis 动态插件面板 = 30、应用弹层（菜单/tooltip/modal）= 100+。
 - **不要直接编辑 `~/.dsh/profiles/web/cordis.yml`**（那是生成的文件，patch 覆盖在 `cordis.patch.yml`）。
 - `cordis.patch.yml` 顶层是一个 patch 数组：`- insert:` 用于新增行，`- id:` 用于覆盖已有行。
 - `client.js` 用 `require("react")`（bundle 的模块表提供），**不要** `import` 或动态插件的 `styles`/`host` 全局。
