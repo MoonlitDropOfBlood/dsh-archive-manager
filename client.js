@@ -498,6 +498,20 @@ window.__ModuleLoader__.load({
           const count = rawCount - (ghostIds.length > rawCount ? rawCount : ghostIds.length);
           const safeCount = count > 0 ? count : 0;
           const isOpen = useOpen();
+          // Esc 关闭弹窗：打开期间在 document 捕获阶段监听 keydown，命中
+          // Escape 即关闭并 stopPropagation——弹窗位于 z-index:1000 顶层，
+          // 此时 Esc 应只作用于它，不穿透到 shell 的全局快捷键或底层输入框。
+          React.useEffect(() => {
+            if (!isOpen) return undefined;
+            const onKeyDown = (e) => {
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                setOpen(false);
+              }
+            };
+            document.addEventListener("keydown", onKeyDown, true);
+            return () => document.removeEventListener("keydown", onKeyDown, true);
+          }, [isOpen]);
           const children = [];
           children.push(React.createElement("span", { key: "icon", className: "am-foot-icon", "aria-hidden": true }, React.createElement(ArchiveIcon)));
           if (wide) children.push(React.createElement("span", { key: "label", className: "am-foot-label" }, "归档"));
