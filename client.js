@@ -1,17 +1,31 @@
 /**
  * dsh-archive-manager — Client half (web bundle).
  *
- * Rendered by the DSH web shell via `window.__ModuleLoader__.load`. Registers:
- *   - a sidebar footer action button (archived-session entry),
- *   - a frame-wide archive manager panel (search / group / restore / delete),
- *     rendered together with the button from the sidebar.footer.action slot —
- *     mirroring how ui-settings renders its modal from sidebar.settings (see
- *     the registration comment for the stacking-context rationale).
+ * Rendered by the DSH web shell via `window.__ModuleLoader__.load`. Two
+ * operating modes, chosen by feature detection (never by version string):
  *
- * The panel mirrors the DSH 工作区 (workspace) browsing region: a dialog
- * surface using the same design tokens as the workspace browser — folder
- * group headers, compact 32px session rows with a leading slot icon and
- * relative time, and hover-revealed actions (workspace rowActions pattern).
+ * - DSH < 0.1.7 (legacy): registers a sidebar footer action button
+ *   (archived-session entry) plus a frame-wide archive manager panel
+ *   (search / group / restore / delete), rendered together from the
+ *   sidebar.footer.action slot — mirroring how ui-settings renders its modal
+ *   from sidebar.settings (see the registration comment for the
+ *   stacking-context rationale).
+ * - DSH >= 0.1.7 (modern): the shell ships its own archive management (the
+ *   sidebar "仅显示已归档" filter with per-row archive actions), so this
+ *   plugin adds ONLY the missing delete affordance: a danger row in each
+ *   archived session's "..." menu (`sidebar.workspaces.session.menu.item`)
+ *   and a hover trash button at the row end
+ *   (`sidebar.workspaces.session.row.action`), both opening a confirm dialog
+ *   rendered from the sidebar foot slot. Detection = whether those slots
+ *   ever get declared: `ctx.slots.inject()` on an undeclared key never
+ *   fires, so pre-0.1.7 builds stay on the legacy path automatically, and
+ *   the footer button hides itself the moment the modern slots appear.
+ *
+ * The panel/dialog mirrors the DSH 工作区 (workspace) browsing region: a
+ * dialog surface using the same design tokens as the workspace browser —
+ * folder group headers, compact 32px session rows with a leading slot icon
+ * and relative time, and hover-revealed actions (workspace rowActions
+ * pattern).
  *
  * Host communication goes through the `archiveManager` Remote namespace
  * (`ctx.remote.archiveManager.restore/delete/state`), published by the Host
@@ -26,9 +40,11 @@ window.__ModuleLoader__.load({
     const React = require("react");
 
     // ---- CSS (package-owned, mirrors the DSH workspace browser + Modal) ----
-    const CSS = `
-[class*="footerActions"]{flex-direction:column;align-items:center;}
-
+    // CSS_COMMON renders in both modes; CSS_LEGACY is the footer-button
+    // dressing, injected only while the legacy panel exists (cleared the
+    // moment the 0.1.7+ slots declare, so the modern shell keeps its own
+    // footer layout untouched).
+    const CSS_COMMON = `
 /* Overlay — same mask surface as DSH Modal, same z-index tier as the DSH
    settings overlay (1000). This layer MUST be rendered from a slot that sits
    outside any stacking context (the sidebar foot, like Settings does), never
@@ -98,7 +114,37 @@ window.__ModuleLoader__.load({
 .am-error{color:var(--dsw-alias-state-error-primary,#e5484d);padding:8px 24px;font-size:12px;line-height:18px;}
 .am-ghost{color:var(--dsw-alias-label-secondary,inherit);padding:8px 24px;font-size:12px;line-height:18px;}
 
-/* Sidebar footer entry (unchanged) */
+/* ---- 0.1.7+ modern surfaces (delete affordances on the built-in archive) ---- */
+
+/* Danger row in an archived session's "..." menu. Rendered through
+   ui-primitives' MenuItemButton when the module table provides it (native
+   look); this class styles the defensive plain-button fallback. */
+.am-menu-del{display:flex;align-items:center;gap:8px;width:100%;padding:5px 12px;border:none;background:transparent;color:var(--dsw-alias-state-error-primary,#e5484d);font-family:inherit;font-size:13px;line-height:18px;text-align:left;cursor:pointer;border-radius:var(--dsw-radius-sm,6px);}
+.am-menu-del:hover{background:var(--dsw-alias-interactive-bg-hover-danger,rgba(229,72,77,.12));}
+.am-menu-del[disabled]{opacity:.5;cursor:default;}
+
+/* Hover button at the row end — same 28px metrics as ui-workspace's own
+   row-action iconButton so it sits in the strip without reflow. */
+.am-row-del{border-radius:var(--dsw-radius-sm,6px);cursor:pointer;width:28px;height:28px;color:var(--dsw-alias-label-secondary,inherit);background:0 0;border:none;flex:none;display:inline-flex;justify-content:center;align-items:center;padding:0;}
+.am-row-del:hover{color:var(--dsw-alias-state-error-primary,#e5484d);}
+.am-row-del[disabled]{opacity:.5;cursor:default;}
+
+/* Confirm dialog — same surface family as the legacy panel, compact width.
+   Rendered from the sidebar foot slot (fixed, root stacking context) so
+   dsh-better-sidebar's z-index:25 body layer cannot cover it. */
+.am-confirm{position:relative;display:flex;flex-direction:column;width:440px;max-width:calc(100vw - 48px);overflow:hidden;border:1px solid var(--dsw-alias-border-inverted,rgba(128,128,128,.3));border-radius:24px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,inherit);box-shadow:var(--dsw-shadow-lv3,0 12px 40px rgba(0,0,0,.25));}
+.am-confirm .am-confirm-body{padding:4px 24px 16px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary,inherit);}
+.am-confirm .am-confirm-title{font-weight:500;font-size:16px;line-height:24px;color:var(--dsw-alias-label-primary,inherit);}
+.am-confirm .am-confirm-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:0 24px 20px;}
+.am-confirm .am-confirm-error{color:var(--dsw-alias-state-error-primary,#e5484d);font-size:12px;line-height:18px;padding:0 24px 12px;}
+.am-confirm .am-confirm-note{color:var(--dsw-alias-label-tertiary,inherit);font-size:12px;line-height:18px;}
+.am-confirm .am-confirm-btn{border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.2));background:transparent;color:var(--dsw-alias-label-primary,inherit);font-family:inherit;font-size:13px;line-height:18px;padding:6px 14px;border-radius:10px;cursor:pointer;}
+.am-confirm .am-confirm-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));}
+.am-confirm .am-confirm-btn.am-confirm-danger{border-color:transparent;background:var(--dsw-alias-state-error-primary,#e5484d);color:var(--dsw-alias-bg-base,#fff);}
+.am-confirm .am-confirm-btn.am-confirm-danger:hover{background:var(--dsw-alias-state-error-primary,#e5484d);filter:brightness(1.06);}
+.am-confirm .am-confirm-btn[disabled]{opacity:.5;cursor:default;}
+
+/* Sidebar footer entry (legacy mode only) */
 .am-foot-layer{flex:none;width:100%;margin:8px 0 0;display:flex;align-items:center;}
 .am-foot-layer .am-foot{width:100%;height:49px;border-radius:12px;padding:0 8px 0 6px;display:inline-flex;align-items:center;gap:8px;background:transparent;border:none;color:var(--dsw-alias-label-primary,inherit);font-family:inherit;font-size:14px;cursor:pointer;overflow:hidden;}
 .am-foot-layer .am-foot:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.1));}
@@ -110,6 +156,13 @@ window.__ModuleLoader__.load({
 .am-foot-layer.am-foot-rail .am-foot{width:36px;height:36px;padding:0;justify-content:center;border-radius:10px;}
 `;
 
+    // Footer-column layout: only meaningful while OUR footer button exists.
+    // Injected at boot, cleared permanently once the 0.1.7+ slots declare
+    // (markModern), so a modern DSH footer keeps its own layout rules.
+    const CSS_LEGACY = `
+[class*="footerActions"]{flex-direction:column;align-items:center;}
+`;
+
     // ---- Client Remote contribution ----------------------------------------
     // The browser-side `remote.archiveManager` service only exists after this
     // module mounts its namespace via ctx.remote.$mount(): dsh-api-remotes'
@@ -117,8 +170,18 @@ window.__ModuleLoader__.load({
     // must mount its own. Mirrors the invocations in typert.host.js (ids,
     // service/namespace/method, wire fields). zod is not requirable in the
     // browser module loader, so codecs use passthrough schemas — the runtime
-    // contract only requires typeSymbol + schema.parse().
-    const passthrough = () => ({ parse: (v) => v });
+    // contract only needs typeSymbol plus a parse (DSH < 0.1.7 reads
+    // `codec.schema.parse`) or a create() factory (the typert registry on
+    // DSH >= 0.1.7 rejects a strict codec with "has no create() factory").
+    // Every codec therefore carries BOTH fields, like typert.host.js.
+    let passthroughValue;
+    const passthroughSchema = () => (passthroughValue ??= { parse: (v) => v });
+    const strictClientCodec = (typeSymbol) => ({
+      mode: "strict",
+      typeSymbol,
+      schema: passthroughSchema(),
+      create: passthroughSchema,
+    });
     const CLIENT_REMOTE = {
       package: "dsh-archive-manager",
       descriptors: [
@@ -133,10 +196,10 @@ window.__ModuleLoader__.load({
               name: "request",
               wire: "request",
               source: "json",
-              codec: { mode: "strict", typeSymbol: "dsh-archive-manager#ArchiveManagerRestoreRequest", schema: passthrough() },
+              codec: strictClientCodec("dsh-archive-manager#ArchiveManagerRestoreRequest"),
             },
           ],
-          result: { mode: "strict", typeSymbol: "dsh-archive-manager#ArchiveManagerRestoreResult", schema: passthrough() },
+          result: strictClientCodec("dsh-archive-manager#ArchiveManagerRestoreResult"),
         },
         {
           id: "dsh-archive-manager#archiveManager/delete",
@@ -149,10 +212,10 @@ window.__ModuleLoader__.load({
               name: "request",
               wire: "request",
               source: "json",
-              codec: { mode: "strict", typeSymbol: "dsh-archive-manager#ArchiveManagerDeleteRequest", schema: passthrough() },
+              codec: strictClientCodec("dsh-archive-manager#ArchiveManagerDeleteRequest"),
             },
           ],
-          result: { mode: "strict", typeSymbol: "dsh-archive-manager#ArchiveManagerDeleteResult", schema: passthrough() },
+          result: strictClientCodec("dsh-archive-manager#ArchiveManagerDeleteResult"),
         },
         {
           id: "dsh-archive-manager#archiveManager/state",
@@ -161,7 +224,7 @@ window.__ModuleLoader__.load({
           method: "state",
           invocation: { kind: "direct" },
           parameters: [],
-          result: { mode: "strict", typeSymbol: "dsh-archive-manager#ArchiveManagerStateResult", schema: passthrough() },
+          result: strictClientCodec("dsh-archive-manager#ArchiveManagerStateResult"),
         },
       ],
     };
@@ -172,13 +235,32 @@ window.__ModuleLoader__.load({
       await ctx.remote.$mount(CLIENT_REMOTE);
 
       const styleTag = document.createElement("style");
-      styleTag.textContent = CSS;
+      styleTag.textContent = CSS_COMMON;
       document.head.appendChild(styleTag);
       ctx.effect(() => () => styleTag.remove());
+
+      // Legacy footer-column override; cleared for good by markModern() once
+      // the 0.1.7+ built-in archive slots declare.
+      const legacyStyleTag = document.createElement("style");
+      legacyStyleTag.textContent = CSS_LEGACY;
+      document.head.appendChild(legacyStyleTag);
+      ctx.effect(() => () => legacyStyleTag.remove());
 
       // ctx.get() reads the service without the property-accessor inject
       // guard; it exists because the $mount above just created it.
       const remote = ctx.get("remote.archiveManager");
+
+      // ui-primitives (MenuItemButton / Tooltip / IconTrashOutlineRegular) is
+      // part of the 0.1.7+ module table — ui-workspace requires it from the
+      // same table. Loaded defensively: pre-0.1.7 builds may not ship it, and
+      // the modern components (its only consumers) render only when the 0.1.7
+      // slots exist. Fallbacks below keep every surface functional without it.
+      let ui = null;
+      try {
+        ui = require("@deepseek-ai/dsh-client-ui-primitives");
+      } catch {
+        ui = null;
+      }
 
       // Shared open state between the footer button and the overlay.
       let open = false;
@@ -205,6 +287,62 @@ window.__ModuleLoader__.load({
           ghostStore.set(res && res.ok && Array.isArray(res.value.ghostIds) ? res.value.ghostIds : []);
         } catch {
           ghostStore.set([]);
+        }
+      }
+
+      // ---- Modern (DSH >= 0.1.7) mode state --------------------------------
+      // modernStore flips on exactly when the built-in archive's row slots
+      // declare (see the inject registrations at the bottom of apply). Until
+      // then the legacy footer button renders; afterwards it hides itself and
+      // the footer slot only carries the delete confirm dialog.
+      const modernStore = (() => {
+        let value = false;
+        const listeners = new Set();
+        return {
+          getSnapshot: () => value,
+          subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+          set: (next) => { if (value !== next) { value = next; for (const fn of listeners) fn(); } },
+        };
+      })();
+      function useModern() { return React.useSyncExternalStore(modernStore.subscribe, modernStore.getSnapshot); }
+
+      // Pending delete request for the modern confirm dialog ({sessionId,
+      // displayTitle} | null), set by the menu row / hover button.
+      const deleteStore = (() => {
+        let value = null;
+        const listeners = new Set();
+        return {
+          getSnapshot: () => value,
+          subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+          set: (next) => { if (value !== next) { value = next; for (const fn of listeners) fn(); } },
+        };
+      })();
+      function useDeleteRequest() { return React.useSyncExternalStore(deleteStore.subscribe, deleteStore.getSnapshot); }
+
+      // Enter modern mode: hide the legacy button (and its footer-layout CSS)
+      // for good, then let the caller register its slot entries.
+      const markModern = () => {
+        modernStore.set(true);
+        legacyStyleTag.textContent = "";
+      };
+
+      /**
+       * Whether one session is in the registry-global archive set, read from
+       * the framework's global `useWorkspaces` standard hook (delivered to
+       * every slot component on every supported DSH). Fails closed to false
+       * when the hook is unavailable.
+       *
+       * @param {Function} useWorkspaces - the global workspace snapshot hook.
+       * @param {string} sessionId - row session id.
+       * @returns {boolean} archived membership.
+       */
+      function useArchivedMember(useWorkspaces, sessionId) {
+        try {
+          return useWorkspaces(
+            (s) => Array.isArray(s.archivedSessionIds) && s.archivedSessionIds.indexOf(sessionId) !== -1
+          ) === true;
+        } catch {
+          return false;
         }
       }
 
@@ -241,6 +379,24 @@ window.__ModuleLoader__.load({
           "svg",
           { width: 14, height: 14, viewBox: "0 0 14 14", fill: "none", stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
           React.createElement("path", { d: "m5 3.5 3.5 3.5L5 10.5" })
+        );
+      }
+
+      // Trash glyph for the modern delete surfaces: ui-primitives' shipped
+      // icon when available (identical to the shell's own artwork), a plain
+      // outline SVG otherwise.
+      function TrashIcon({ size }) {
+        const px = size || 14;
+        if (ui && ui.IconTrashOutlineRegular) {
+          return React.createElement(ui.IconTrashOutlineRegular, { size: px });
+        }
+        return React.createElement(
+          "svg",
+          { width: px, height: px, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.3, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
+          React.createElement("path", { d: "M2.5 4.5h11" }),
+          React.createElement("path", { d: "M5.5 4.5v-1a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1" }),
+          React.createElement("path", { d: "M4 4.5l.6 8.1a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9l.6-8.1" }),
+          React.createElement("path", { d: "M6.5 7v4M9.5 7v4" })
         );
       }
 
@@ -475,6 +631,194 @@ window.__ModuleLoader__.load({
         );
       }
 
+      // ---- Modern (DSH >= 0.1.7) delete surfaces ---------------------------
+      // The built-in archive management owns listing/restore on 0.1.7+; these
+      // three components add only DELETION on top of it. Both entry points
+      // show for archived, non-ghost rows only and open the shared confirm
+      // dialog (rendered from the sidebar foot slot — see the stacking note
+      // on the footer registration below).
+
+      /**
+       * Danger row in an archived session's "..." menu
+       * (`sidebar.workspaces.session.menu.item`, order 450 — after the
+       * shipped pin/rename/fork/archive rows). Dismisses the menu through the
+       * slot's `useMenuOpenState` hook before raising the confirm dialog.
+       *
+       * @param props - owner share (row identity) + the slot's hook seat + the global workspace hook.
+       * @returns the menu row, or null when delete does not apply.
+       */
+      function DeleteMenuEntry({ sessionId, displayTitle, useMenuOpenState, useWorkspaces }) {
+        const archived = useArchivedMember(useWorkspaces, sessionId);
+        const ghostIds = useGhostIds();
+        const ghost = ghostIds.indexOf(sessionId) !== -1;
+        const menuState = typeof useMenuOpenState === "function" ? useMenuOpenState() : null;
+        const setMenuOpen = menuState ? menuState[1] : () => {};
+        // Keep the ghost list fresh while the menu offering delete is open.
+        React.useEffect(() => { if (archived) refreshState(); }, [archived, sessionId]);
+        if (!archived || ghost) return null;
+        const select = () => {
+          setMenuOpen(false);
+          deleteStore.set({ sessionId, displayTitle });
+        };
+        if (ui && ui.MenuItemButton) {
+          return React.createElement(
+            ui.MenuItemButton,
+            {
+              danger: true,
+              separatorBefore: true,
+              icon: React.createElement(TrashIcon, { size: 14 }),
+              onSelect: select,
+            },
+            "删除会话…"
+          );
+        }
+        return React.createElement(
+          "button",
+          { type: "button", role: "menuitem", className: "am-menu-del", onClick: select },
+          React.createElement(TrashIcon, { size: 14 }),
+          "删除会话…"
+        );
+      }
+
+      /**
+       * Hover trash button at the archived row's end
+       * (`sidebar.workspaces.session.row.action`, order 300 — after the
+       * shipped archive/pin buttons). Clicks inside the row-action strip stay
+       * in the strip, so no propagation handling is needed.
+       *
+       * @param props - owner share (row identity) + the global workspace hook.
+       * @returns the button, or null when delete does not apply.
+       */
+      function DeleteRowButton({ sessionId, displayTitle, useWorkspaces }) {
+        const archived = useArchivedMember(useWorkspaces, sessionId);
+        const ghostIds = useGhostIds();
+        const ghost = ghostIds.indexOf(sessionId) !== -1;
+        React.useEffect(() => { if (archived) refreshState(); }, [archived, sessionId]);
+        if (!archived || ghost) return null;
+        const button = React.createElement(
+          "button",
+          {
+            type: "button",
+            className: "am-row-del",
+            title: "删除会话",
+            "aria-label": "删除会话",
+            onClick: () => deleteStore.set({ sessionId, displayTitle }),
+          },
+          React.createElement(TrashIcon, { size: 14 })
+        );
+        if (ui && ui.Tooltip) {
+          return React.createElement(
+            ui.Tooltip,
+            { label: "删除会话", side: "bottom", align: "end", delayMs: 500 },
+            button
+          );
+        }
+        return button;
+      }
+
+      /**
+       * The modern confirm dialog: permanent deletion gets the same 二次确认
+       * treatment as the legacy panel (per-request state dies with the
+       * request; errors stay visible; a live-but-idle target resolves into a
+       * ghost explanation instead of closing silently).
+       *
+       * @param props - the pending request and its dismissal.
+       * @returns the fixed overlay + dialog.
+       */
+      function DeleteConfirmForm({ req, onClose }) {
+        const [busy, setBusy] = React.useState(false);
+        const [error, setError] = React.useState(null);
+        const [ghost, setGhost] = React.useState(false);
+        // Esc cancels: the dialog owns z-index:1000, so swallow the key to
+        // keep it from reaching the shell's global Escape handlers.
+        React.useEffect(() => {
+          const onKeyDown = (e) => {
+            if (e.key === "Escape") {
+              e.stopPropagation();
+              if (!busy) onClose();
+            }
+          };
+          document.addEventListener("keydown", onKeyDown, true);
+          return () => document.removeEventListener("keydown", onKeyDown, true);
+        }, [busy]);
+        const close = () => { if (!busy) onClose(); };
+        const confirm = async () => {
+          if (busy) return;
+          setBusy(true);
+          setError(null);
+          try {
+            const res = await remote.delete({ sessionId: req.sessionId });
+            if (res && res.ok) {
+              try {
+                const sessions = ctx.get("sessions");
+                if (sessions && typeof sessions.refresh === "function") sessions.refresh();
+              } catch { /* non-fatal */ }
+              refreshState();
+              if (res.value && res.value.live) {
+                // Live-but-idle: files are gone, the archive entry stays as a
+                // ghost until restart (same semantics as the legacy panel).
+                setGhost(true);
+              } else {
+                onClose();
+              }
+            } else {
+              const err = res && res.error;
+              setError((err && err.message) || (err && err.code) || "删除失败");
+            }
+          } catch (e) {
+            setError(e instanceof Error ? e.message : String(e));
+          } finally {
+            setBusy(false);
+          }
+        };
+        const title = req.displayTitle || req.sessionId;
+        return React.createElement(
+          "div", { className: "am-overlay", onClick: close },
+          React.createElement(
+            "div", { className: "am-confirm", onClick: (e) => e.stopPropagation() },
+            React.createElement(
+              "div", { className: "am-header" },
+              React.createElement("span", { className: "am-title" }, ghost ? "已删除会话" : "删除会话"),
+              React.createElement(
+                "button",
+                { className: "am-close", onClick: close, disabled: busy, title: "关闭", "aria-label": "关闭" },
+                "✕"
+              )
+            ),
+            React.createElement(
+              "div", { className: "am-confirm-body" },
+              ghost
+                ? "日志文件已删除。该会话仍驻留内存，删除条目将在重启 DSH 后自动清除。"
+                : "将永久删除「" + title + "」的会话日志文件，此操作不可恢复。"
+            ),
+            error && !ghost
+              ? React.createElement("div", { className: "am-confirm-error" }, error)
+              : null,
+            React.createElement(
+              "div", { className: "am-confirm-actions" },
+              ghost
+                ? React.createElement(
+                    "button",
+                    { type: "button", className: "am-confirm-btn", onClick: onClose },
+                    "关闭"
+                  )
+                : [
+                    React.createElement(
+                      "button",
+                      { key: "cancel", type: "button", className: "am-confirm-btn", disabled: busy, onClick: close },
+                      "取消"
+                    ),
+                    React.createElement(
+                      "button",
+                      { key: "confirm", type: "button", className: "am-confirm-btn am-confirm-danger", disabled: busy, onClick: confirm },
+                      busy ? "删除中…" : "永久删除"
+                    ),
+                  ]
+            )
+          )
+        );
+      }
+
       // Sidebar footer action entry (Cordis Plugin 下方、设置上方；纵向排列由注入
       // CSS 保证) + frame-wide archive manager panel.
       //
@@ -498,6 +842,8 @@ window.__ModuleLoader__.load({
           const count = rawCount - (ghostIds.length > rawCount ? rawCount : ghostIds.length);
           const safeCount = count > 0 ? count : 0;
           const isOpen = useOpen();
+          const modern = useModern();
+          const deleteReq = useDeleteRequest();
           // Esc 关闭弹窗：打开期间在 document 捕获阶段监听 keydown，命中
           // Escape 即关闭并 stopPropagation——弹窗位于 z-index:1000 顶层，
           // 此时 Esc 应只作用于它，不穿透到 shell 的全局快捷键或底层输入框。
@@ -512,6 +858,18 @@ window.__ModuleLoader__.load({
             document.addEventListener("keydown", onKeyDown, true);
             return () => document.removeEventListener("keydown", onKeyDown, true);
           }, [isOpen]);
+          // DSH >= 0.1.7: the shell's built-in archive management owns the
+          // sidebar entry — no button, no panel; this slot carries only the
+          // delete confirm dialog that this mode exists to add.
+          if (modern) {
+            return deleteReq
+              ? React.createElement(DeleteConfirmForm, {
+                  key: deleteReq.sessionId,
+                  req: deleteReq,
+                  onClose: () => deleteStore.set(null),
+                })
+              : null;
+          }
           const children = [];
           children.push(React.createElement("span", { key: "icon", className: "am-foot-icon", "aria-hidden": true }, React.createElement(ArchiveIcon)));
           if (wide) children.push(React.createElement("span", { key: "label", className: "am-foot-label" }, "归档"));
@@ -535,10 +893,36 @@ window.__ModuleLoader__.load({
           return [button, overlay];
         }
       ));
+
+      // ---- Modern-mode registrations (fired only on DSH >= 0.1.7) ----------
+      // ui-workspace declares these two lists when it registers the built-in
+      // archive browsing region (the "仅显示已归档" filter world). On earlier
+      // DSH builds the keys are never declared: ctx.slots.inject() waits
+      // silently, these callbacks never run, no entry is registered, and the
+      // legacy footer button stays — that IS the version switch. The first
+      // declaration also flips markModern(), which hides the legacy button
+      // and drops the footer-column CSS for good.
+      ctx.slots.inject("sidebar.workspaces.session.menu.item", () => {
+        markModern();
+        return ctx.slots.register(
+          { name: "sidebar.workspaces.session.menu.item", id: "dsh-archive-manager.delete", order: 450 },
+          DeleteMenuEntry
+        );
+      });
+      ctx.slots.inject("sidebar.workspaces.session.row.action", () => {
+        markModern();
+        return ctx.slots.register(
+          { name: "sidebar.workspaces.session.row.action", id: "dsh-archive-manager.delete", order: 300 },
+          DeleteRowButton
+        );
+      });
     }
 
     exports.apply = apply;
     exports.inject = ["slots", "remote"];
+    // Exposed for verify-typert-compat.mjs (the browser wiring contract has
+    // to satisfy both DSH typert registries; nothing else reads this).
+    exports.CLIENT_REMOTE = CLIENT_REMOTE;
     return module.exports;
   },
 });

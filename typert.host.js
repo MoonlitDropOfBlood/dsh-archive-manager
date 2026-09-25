@@ -8,72 +8,131 @@
  *
  * Keep the invocation ids, service/namespace names and method names in sync
  * with `index.js` (ArchiveManagerService) and `client.js`.
+ *
+ * Cross-version note: strict codecs carry BOTH `schema` (DSH < 0.1.7 reads
+ * the zod instance) and `create` (DSH >= 0.1.7 requires the factory) — see
+ * the codec contract comment below before touching any codec.
  */
 
 import { z } from "zod";
 
 // ---- shared shapes ---------------------------------------------------------
+//
+// DSH-versioned codec contract (the ONE field that differs across DSH builds):
+//   - DSH < 0.1.7 (typert-loader / typert-registry): a strict codec must carry
+//     `codec.schema` — a zod v4 INSTANCE (`_zod` + `parse`) — and the runtime
+//     calls `codec.schema.parse(...)`.
+//   - DSH >= 0.1.7: a strict codec must carry `codec.create` — a FACTORY
+//     function returning a zod schema — and the runtime calls
+//     `codec.create().parse(...)`; a plain instance in `schema` fails
+//     validation with "strict codec has no create() factory".
+// Every codec below therefore carries BOTH: `schema` (materialized instance,
+// read by <0.1.7) and `create` (memoized factory, read by >=0.1.7). Each
+// version's validator only inspects its own field, so the extra field is
+// ignored everywhere. Same for TYPERT.schemas entries (0.1.7 requires
+// `create`; our list stays empty, which satisfies both).
 
-const sessionIdSchema = z.intersection(z.string(), z.unknown()).readonly();
+/**
+ * Memoize one zod schema behind a `create()`-style factory: repeated calls
+ * return the same instance (the official 0.1.7 manifests use this exact
+ * `value ??= build()` pattern).
+ *
+ * @param {() => object} build - constructs the zod schema once.
+ * @returns {() => object} the factory.
+ */
+function lazy(build) {
+  let value;
+  return () => (value ??= build());
+}
 
-const restoreResultSchema = z.union([
-  z.object({
-    ok: z.literal(true).readonly(),
-    value: z.object({
-      restored: z.literal(true).readonly(),
-    }).readonly(),
-  }).readonly(),
-  z.object({
-    ok: z.literal(false).readonly(),
-    error: z.object({
-      code: z.string().readonly(),
-      message: z.string().readonly().optional(),
-    }).readonly(),
-  }).readonly(),
-]);
+const sessionIdSchema = lazy(() => z.intersection(z.string(), z.unknown()).readonly());
 
-const deleteResultSchema = z.union([
-  z.object({
-    ok: z.literal(true).readonly(),
-    value: z.object({
-      fileRemoved: z.boolean().readonly(),
-      live: z.boolean().readonly(),
+const restoreResultSchema = lazy(() =>
+  z.union([
+    z.object({
+      ok: z.literal(true).readonly(),
+      value: z.object({
+        restored: z.literal(true).readonly(),
+      }).readonly(),
     }).readonly(),
-  }).readonly(),
-  z.object({
-    ok: z.literal(false).readonly(),
-    error: z.object({
-      code: z.string().readonly(),
-      message: z.string().readonly().optional(),
+    z.object({
+      ok: z.literal(false).readonly(),
+      error: z.object({
+        code: z.string().readonly(),
+        message: z.string().readonly().optional(),
+      }).readonly(),
     }).readonly(),
-  }).readonly(),
-]);
+  ])
+);
 
-const stateResultSchema = z.union([
-  z.object({
-    ok: z.literal(true).readonly(),
-    value: z.object({
-      ghostIds: z.array(sessionIdSchema).readonly(),
+const deleteResultSchema = lazy(() =>
+  z.union([
+    z.object({
+      ok: z.literal(true).readonly(),
+      value: z.object({
+        fileRemoved: z.boolean().readonly(),
+        live: z.boolean().readonly(),
+      }).readonly(),
     }).readonly(),
-  }).readonly(),
-  z.object({
-    ok: z.literal(false).readonly(),
-    error: z.object({
-      code: z.string().readonly(),
-      message: z.string().readonly().optional(),
+    z.object({
+      ok: z.literal(false).readonly(),
+      error: z.object({
+        code: z.string().readonly(),
+        message: z.string().readonly().optional(),
+      }).readonly(),
     }).readonly(),
-  }).readonly(),
-]);
+  ])
+);
+
+const stateResultSchema = lazy(() =>
+  z.union([
+    z.object({
+      ok: z.literal(true).readonly(),
+      value: z.object({
+        ghostIds: z.array(sessionIdSchema()).readonly(),
+      }).readonly(),
+    }).readonly(),
+    z.object({
+      ok: z.literal(false).readonly(),
+      error: z.object({
+        code: z.string().readonly(),
+        message: z.string().readonly().optional(),
+      }).readonly(),
+    }).readonly(),
+  ])
+);
 
 // ---- per-invocation parameter/result schemas -------------------------------
 
-const _archiveManager_restore_parameter_0$schema = z.object({
-  sessionId: sessionIdSchema,
-});
+const restoreRequestSchema = lazy(() =>
+  z.object({
+    sessionId: sessionIdSchema(),
+  })
+);
 
-const _archiveManager_delete_parameter_0$schema = z.object({
-  sessionId: sessionIdSchema,
-});
+const deleteRequestSchema = lazy(() =>
+  z.object({
+    sessionId: sessionIdSchema(),
+  })
+);
+
+/**
+ * Build the dual-version strict codec: `schema` for DSH < 0.1.7 (instance
+ * read at validation time), `create` for DSH >= 0.1.7 (factory invoked by
+ * the runtime). Both point at the same memoized instance.
+ *
+ * @param {string} typeSymbol - wire type symbol.
+ * @param {() => object} factory - the memoized schema factory.
+ * @returns {object} the codec descriptor.
+ */
+function strictCodec(typeSymbol, factory) {
+  return {
+    mode: "strict",
+    typeSymbol,
+    schema: factory(),
+    create: factory,
+  };
+}
 
 export const TYPERT = {
   package: "@duke-dsh-plugins/dsh-archive-manager",
@@ -91,18 +150,16 @@ export const TYPERT = {
           name: "request",
           wire: "request",
           source: "json",
-          codec: {
-            mode: "strict",
-            typeSymbol: "dsh-archive-manager#ArchiveManagerRestoreRequest",
-            schema: _archiveManager_restore_parameter_0$schema,
-          },
+          codec: strictCodec(
+            "dsh-archive-manager#ArchiveManagerRestoreRequest",
+            restoreRequestSchema
+          ),
         },
       ],
-      result: {
-        mode: "strict",
-        typeSymbol: "dsh-archive-manager#ArchiveManagerRestoreResult",
-        schema: restoreResultSchema,
-      },
+      result: strictCodec(
+        "dsh-archive-manager#ArchiveManagerRestoreResult",
+        restoreResultSchema
+      ),
       sourceLocation: { file: "index.js", line: 1, column: 1 },
     },
     {
@@ -116,18 +173,16 @@ export const TYPERT = {
           name: "request",
           wire: "request",
           source: "json",
-          codec: {
-            mode: "strict",
-            typeSymbol: "dsh-archive-manager#ArchiveManagerDeleteRequest",
-            schema: _archiveManager_delete_parameter_0$schema,
-          },
+          codec: strictCodec(
+            "dsh-archive-manager#ArchiveManagerDeleteRequest",
+            deleteRequestSchema
+          ),
         },
       ],
-      result: {
-        mode: "strict",
-        typeSymbol: "dsh-archive-manager#ArchiveManagerDeleteResult",
-        schema: deleteResultSchema,
-      },
+      result: strictCodec(
+        "dsh-archive-manager#ArchiveManagerDeleteResult",
+        deleteResultSchema
+      ),
       sourceLocation: { file: "index.js", line: 1, column: 1 },
     },
     {
@@ -137,11 +192,10 @@ export const TYPERT = {
       method: "state",
       invocation: { kind: "direct" },
       parameters: [],
-      result: {
-        mode: "strict",
-        typeSymbol: "dsh-archive-manager#ArchiveManagerStateResult",
-        schema: stateResultSchema,
-      },
+      result: strictCodec(
+        "dsh-archive-manager#ArchiveManagerStateResult",
+        stateResultSchema
+      ),
       sourceLocation: { file: "index.js", line: 1, column: 1 },
     },
   ],

@@ -18,6 +18,11 @@
 
 归档后消失在侧栏的会话，在这里统一呈现——**按项目分组、按更新时间倒序、支持搜索**，并且每个归档都能**一键还原**或**永久删除**。
 
+> **版本适配（自动切换，无需配置）**
+> - **DSH < 0.1.7**：完整归档管理面板（侧栏底部"归档"按钮 → 分组列表 / 搜索 / 还原 / 删除）。
+> - **DSH ≥ 0.1.7**：DSH 自带归档管理（侧栏筛选"仅显示已归档"、行内取消归档），本插件**只补上它缺少的删除功能**——归档会话的 "…" 菜单里多一行"删除会话…"、行尾悬停多一个 🗑 按钮，点击弹出永久删除二次确认框；不再显示本插件自己的面板按钮。
+> - 识别方式是**特性检测**（0.1.7 新增的两个行操作槽位是否声明），不是版本号，因此任何中间版本都会落到正确的一侧。
+
 ## 功能
 
 | 功能 | 说明 |
@@ -46,11 +51,13 @@ dsh plugin --profile web add /path/to/dsh-archive-manager
 dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/v1.3.0/dsh-archive-manager-1.3.0.tgz
 ```
 
-重启 DSH 后，侧栏底部（Cordis Plugin 下方、设置上方）会出现"归档"按钮。
+重启 DSH 后生效：**DSH < 0.1.7** 会在侧栏底部（Cordis Plugin 下方、设置上方）出现"归档"按钮；**DSH ≥ 0.1.7** 则在归档会话行上出现删除入口（见"使用"）。
 
 > `dsh plugin add` 把插件装成 profile 的 npm 依赖并追加到 `dsh.profile.bundles`，启动时 DSH 自动应用包内的 `cordis.patch.yml` 挂载插件。卸载：`dsh plugin --profile web remove dsh-archive-manager`。
 
 ## 使用
+
+**DSH < 0.1.7：**
 
 1. 点侧栏底部的 **🗂 归档** 按钮（带归档数量）。
 2. 面板按项目列出所有归档会话：
@@ -58,6 +65,14 @@ dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-m
    - **删除**：点一下变"确认删除?"，再点一次才真正删除（永久，不可恢复）。
    - **无效的归档记录**：日志已不存在的残留，点删除清理记录。
 3. 顶部搜索框可实时过滤。
+
+**DSH ≥ 0.1.7（自带归档管理，本插件只加删除）：**
+
+1. 侧栏工作区筛选 **仅显示已归档**（DSH 自带功能）。
+2. 归档会话行上任选其一发起删除：
+   - 行尾悬停的 **🗑 按钮**；
+   - "…" 菜单里的 **删除会话…**（危险红行，位于取消归档之后）。
+3. 弹出确认框后点 **永久删除**；运行中的智能体会被拦截，失败原因显示在框内；已删除但驻留内存的会话会提示重启后清除。
 
 ## 工作原理
 
@@ -88,8 +103,11 @@ dsh-archive-manager/
 
 ```bash
 npm run check                    # node --check index.js client.js typert.host.js
+npm run verify                   # 三个验证脚本：构造 / 双版本 typert 线上契约 / client apply 冒烟
 dsh plugin --profile web add /path/to/dsh-archive-manager   # 安装/重装到本机 DSH profile
 ```
+
+`verify-typert-compat.mjs` 会用**真实 DSH 安装**里的 `validateTypertManifest` 与 `TypertRegistry` 校验本插件的线格式（同时覆盖 0.1.5 与 0.1.7 两套规则）：默认探测本机 DSH 安装与 `.tmppkg/v017/`（npm 拉取的 0.1.7 包），也可用 `DSH_INSTALL_015` / `DSH_INSTALL_017` 环境变量指定。
 
 详见 [AGENTS.md](AGENTS.md)——记录了 DSH 正式插件（Host/Client/Typert 三件套）的完整机制和踩坑。
 
