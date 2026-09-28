@@ -23,8 +23,9 @@
 
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 import { Service } from "@deepseek-ai/cordis";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { basename, dirname, extname } from "node:path";
 
 /**
  * Mark one instance method as a Remote export without relying on decorator
@@ -69,6 +70,36 @@ function readArchived(domain) {
     return [...registry.archivedSessionIds];
   }
   return [];
+}
+
+/**
+ * Resolve the session directory that owns a session's log artifact.
+ *
+ * `sessionPersistence.locate(header).path` changed meaning across DSH majors:
+ *   - DSH < 0.2.0: the session DIRECTORY (`…/<project>/<sessionId>/`), which is
+ *     what `rm(..., { recursive: true })` was written against.
+ *   - DSH >= 0.2.0 (`dsh-session-persistence-jsonl`): the current generation's
+ *     log FILE inside that directory (`…/<project>/<sessionId>/session.v4.jsonl.zstd`).
+ *     Removing only that file would leave the directory and any older generation
+ *     (`session.v3.jsonl.zstd`) behind, so a restart could resurrect the session —
+ *     exactly what "永久删除" must not do.
+ *
+ * So: prefer `stat` on the path itself; when the artifact is already gone, fall
+ * back to the name shape — a located log file always carries an extension
+ * (`session.v4.jsonl.zstd`), while a per-session directory never does.
+ *
+ * @param {string} locatedPath - `sessionPersistence.locate(header).path`.
+ * @returns {string} the directory to remove.
+ */
+function deletionTarget(locatedPath) {
+  const target = String(locatedPath);
+  try {
+    if (statSync(target).isDirectory()) return target;
+    if (statSync(target).isFile()) return dirname(target);
+  } catch {
+    /* artifact already gone — infer from the path shape below */
+  }
+  return extname(basename(target)) === "" ? target : dirname(target);
 }
 
 export class ArchiveManagerService extends TypertRemoteService {
@@ -194,9 +225,20 @@ export class ArchiveManagerService extends TypertRemoteService {
       return { ok: false, error: { code: "agent-running", message: "该会话的智能体正在运行中，请等待其完成或停止后再删除" } };
     }
     const header = await this.findHeader(sessionId);
+    const sessionPersistence = this.ctx.get("sessionPersistence");
+    if (header && (!sessionPersistence || typeof sessionPersistence.locate !== "function")) {
+      // The header exists but this build cannot tell us where its log lives.
+      // Claiming success here would silently keep the session on disk.
+      return {
+        ok: false,
+        error: {
+          code: "locate-unavailable",
+          message: "当前 DSH 版本的会话存储未提供 locate()，无法定位会话日志目录，已保留归档条目",
+        },
+      };
+    }
     let location;
     if (header) {
-      const sessionPersistence = this.ctx.get("sessionPersistence");
       try {
         location = sessionPersistence.locate(header);
       } catch {
@@ -206,7 +248,7 @@ export class ArchiveManagerService extends TypertRemoteService {
     let removed = false;
     let fileError;
     if (location && location.path) {
-      const target = String(location.path);
+      const target = deletionTarget(location.path);
       try {
         // Delete straight from the host process via node:fs — no shell, no
         // PowerShell, no sandbox escalation, so this behaves identically on
@@ -214,7 +256,8 @@ export class ArchiveManagerService extends TypertRemoteService {
         // the host's own privileges, which makes the sandbox ACL dance the
         // previous shell-based implementation needed unnecessary. maxRetries
         // absorbs transient Windows file locks (antivirus / indexers) and is
-        // a no-op elsewhere.
+        // a no-op elsewhere. The whole owning session directory goes, so older
+        // format generations cannot survive the delete (DSH >= 0.2.0).
         await rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
         removed = !existsSync(target);
         if (!removed) fileError = "path-still-exists";
@@ -263,8 +306,10 @@ export class ArchiveManagerService extends TypertRemoteService {
         const session = sessions.get(id);
         if (session === undefined) continue; // not live in memory → not a ghost
         const location = sessionPersistence.locate(session.header);
-        // Live but the log directory is gone → ghost the client hides.
-        if (location && location.path && !existsSync(String(location.path))) ghostIds.push(id);
+        // Live but the log is gone → ghost the client hides. Probed against the
+        // owning session directory, i.e. exactly what `delete` removes: on DSH
+        // >= 0.2.0 `locate` names the current generation's file inside it.
+        if (location && location.path && !existsSync(deletionTarget(location.path))) ghostIds.push(id);
       } catch {
         /* skip */
       }

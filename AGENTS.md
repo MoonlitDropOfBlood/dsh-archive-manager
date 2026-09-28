@@ -11,6 +11,10 @@
 - **DSH < 0.1.7**：侧栏底部（Cordis Plugin 与设置之间）一个"归档"按钮，点击弹出归档管理面板——本文件主要描述的经典形态。
 - **DSH ≥ 0.1.7**：DSH 自带归档管理（侧栏"仅显示已归档"筛选 + 行内归档/取消归档操作），本插件**只补它缺少的删除**：归档行 "…" 菜单多一行"删除会话…"（danger 红行）+ 行尾悬停多一个 🗑 按钮 → 弹永久删除二次确认框；**不显示**自己的面板按钮。
 
+**三个大版本都支持**（0.1.x / 0.2.x）。跨大版本新增两层约束，详见 §8：
+**peerDependencies 兼容闸门**（0.2.0 起，声明的 `@deepseek-ai/dsh*` 版本范围必须覆盖运行时，否则整个 bundle 被 dsh 静默跳过）+
+`sessionPersistence.locate()` 返回值语义变更（0.2.0 起返回日志**文件**而非会话**目录**）。
+
 经典形态（< 0.1.7）的功能：
 
 - 按**项目（工作区）分组**展示归档会话，组内按**最新更新时间倒序**。
@@ -30,6 +34,8 @@ dsh-archive-manager/
 ├── verify-constructor.mjs   # npm run verify ①：Host 构造 + Remote 标记
 ├── verify-typert-compat.mjs # npm run verify ②：双版本 typert 线格式（驱动真实 0.1.5/0.1.7 校验器）
 ├── verify-client-apply.mjs  # npm run verify ③：client apply 冒烟（三个槽位注入 + 现代模式注册）
+├── verify-real-install.mjs  # npm run verify ④：拿真实 DSH 安装跑 peer 闸门 + Host 激活 + 两种磁盘布局的删除
+├── scripts/check-profile-bundle.mjs  # 诊断：真实 dsh-app-boot 会不会跳过本 bundle（--sandbox 用临时 profile 自测本仓库）
 ├── .github/workflows/release.yml  # 打 v* 标签时构建并发布 GitHub Release
 ├── AGENTS.md             # 本文件
 ├── README.md
@@ -137,7 +143,7 @@ DSH 插件通过 **cordis composition** 挂载。本插件是**标准 DSH bundle
 
 ### 6. 删除会话的实现要点
 
-- **定位**：`sessionPersistence.locate(header)` → `{ path }`（会话日志目录，含 `session.jsonl.zstd` 及 `.bak`）。
+- **定位**：`sessionPersistence.locate(header)` → `{ path }`。**0.2.0 起这个 `path` 变成了会话目录里的日志"文件"**（`…/<project>/<sessionId>/session.v4.jsonl.zstd`），0.1.x 返回的是会话**目录**本身——见 §8(b)，`deletionTarget()` 负责统一。
 - **删除**：直接用 `node:fs/promises` 的 `rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })`，再用 `existsSync` 验证。**跨平台**（Windows / macOS / Linux 行为一致），不拼任何 shell 命令。
   - 历史上的 Windows-only 实现是通过 `shell` 服务拼 PowerShell（`Remove-Item` + `Test-Path`），并以 `sandboxPolicy: danger-full-access` 提升绕过沙箱——已废弃。composition 插件跑在 DSH 主进程内、自带完整 Node 权限，直接 `fs` 调用与当年的 `danger-full-access` 等效，且不再依赖 shell 服务 / pwsh 是否存在。
   - `maxRetries` 用来吸收 Windows 上的瞬时文件锁（杀软 / 索引器），其他平台是 no-op。
@@ -187,13 +193,50 @@ codec: { mode: "strict", typeSymbol: "...", schema: restoreRequestSchema(), crea
 - **ui-primitives 用 try/catch require**：`require("@deepseek-ai/dsh-client-ui-primitives")` 在 apply 里做，拿不到就 `ui = null` 走 fallback；它的消费组件只在 0.1.7 槽位存在时才会渲染，所以旧版拿不到也无影响。
 - **ghost/错误反馈**：确认框里失败原因内联展示（运行中拦截、文件锁）；删完但 `live=true` 转为"重启后清除"提示再关闭——语义与旧面板一致。
 
+### 8. DSH 0.2.0 版本适配（peer 兼容闸门 + locate 语义变更）
+
+0.2.0 **没有**改 typert 线格式（§7(a) 的双字段 codec 继续原样通过，0.2.0 的 `validateTypertManifest` / `TypertRegistry` 本尊已由 `verify-typert-compat.mjs` 驱动验证）。真正的两个破坏面在别处：
+
+**(a) peerDependencies 兼容闸门——"被 dsh 静默跳过"的根因。**
+
+0.2.0 的 `dsh-app-boot` 在 `loadProfileDirectory()` 里逐个解析 `dsh.profile.bundles`，对每个 bundle 跑 `evaluatePluginCompatibility(manifest, exemptions)`；只要 manifest 里**任何** `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 的范围不满足运行时版本，就 `throw`，被逐条 catch 进 `skippedBundles`，启动器随后打印
+
+```
+dsh: skipping profile bundle "@duke-dsh-plugins/dsh-archive-manager": Error: Plugin ... is incompatible with dsh 0.2.0-rc.1: peerDependencies {...}
+```
+
+**整个 bundle 一行都不挂载**：Host 服务没有、typert manifest 没有、client bundle 也不在 `window.__DSH_BOOT__` 里。插件不是"报错"，是"消失"——所以排查 0.2.x 上的加载问题，先看这句 skipping 有没有出现。
+
+- **修复方式是声明真实的版本范围**（`^0.1.0-rc.6 || ^0.2.0-rc.1`），**不是**申请豁免。`dsh plugin allow-version` 那种 exact-version exemption 只是绕过闸门，运行时该崩还是崩。
+- 注意 `^0.2.0` **不匹配** `0.2.0-rc.1`（caret 的下界不会因为 `includePrerelease` 而下探到 `0.2.0-0`），所以 prerelease 线必须显式写 `^0.2.0-rc.1`。
+- 新增一个大版本时，范围要能同时覆盖旧运行时；`verify-real-install.mjs` 会用真实安装的 `semver` 断言 `0.1.5` / `0.1.7` / 当前运行时三条都满足，防止"支持 0.2"顺手把 0.1 弄丢。
+
+**(b) `sessionPersistence.locate()` 返回值语义变更。**
+
+| 版本 | `locate(header).path` | 实际磁盘布局 |
+|---|---|---|
+| DSH < 0.2.0 | 会话**目录** | `…/<project>/<sessionId>/session.jsonl.zstd`（+ `.bak`） |
+| DSH ≥ 0.2.0 | 当前格式代次的日志**文件** | `…/<project>/<sessionId>/session.v4.jsonl.zstd`（可能并存 `session.v3.jsonl.zstd` 等旧代次） |
+
+直接 `rm(locate().path)` 在 0.2.0 上**只删掉当前那一个文件**，目录和旧代次还在——重启后会话会从 `session.v3.jsonl.zstd` 复活，"永久删除"名存实亡。因此 `index.js` 里的 `deletionTarget()` 先 `stat` 定位物本身，是文件就取 `dirname()`，是目录就用它；物已经不在时按名字形状兜底（日志文件一定带扩展名 `session.v4.jsonl.zstd`，会话目录名是路径编码过的 session id，不带扩展名）。`state()` 的 ghost 判定也走同一个函数，保证"ghost"和"删除"对"日志没了"的定义完全一致。
+
+**(c) 0.2.0 上确认没坏的（别重复排查）：**
+
+- `TypertRemoteService(ctx, serviceKey, options)` 构造签名、`Remote(name)` 手动驱动（`addInitializer` 契约）、cordis `[Service.init]` 类插件协议。
+- 六个注入服务名（`workspaceRegistry` / `storageDomain` / `sessionPersistence` / `sessionQuery` / `sessions` / `agents`）、`storageDomain.get(name).global.get()`、`workspaceRegistry.setState()`、`sessionQuery.listSessions()` 返回 `{header, live, persisted}`。
+- ui-workspace 仍然声明 `sidebar.workspaces.session.menu.item` / `sidebar.workspaces.session.row.action` 两个槽 → §7(b) 的特性检测照常翻到现代模式。
+- 浏览器模块表的平台 seed 仍包含 `react`、`@deepseek-ai/dsh-client-ui-slots`、`@deepseek-ai/dsh-client-ui-primitives`，所以 `client.js` 的两个 `require` 仍然解析得到。
+
 ## 开发 / 验证
 
 ```bash
 npm run check     # node --check index.js client.js typert.host.js
-npm run verify    # 三连：verify-constructor + verify-typert-compat + verify-client-apply
+npm run verify    # 四连：verify-constructor + verify-typert-compat + verify-client-apply + verify-real-install
+node scripts/check-profile-bundle.mjs --sandbox   # 用真实 dsh-app-boot 确认本仓库不会被跳过（不碰任何 DSH home）
 dsh plugin --profile web add /path/to/dsh-archive-manager   # 安装/重装到本机 DSH profile
 ```
+
+前三个 verify 跑在**仓库自己的 node_modules** 上（钉的是最老的一套 DSH API），所以它们在一个"根本不加载插件"的 DSH 版本上照样全绿。`verify-real-install.mjs` 就是补这个洞的：发现真实 DSH 安装（`DSH_INSTALL` → 本机默认安装目录；没有就 exit 2 明确报"什么都没验"，不装作通过）后，用**安装自带的** `dsh-app-boot.evaluatePluginCompatibility` 跑 peer 闸门、`semver` 断言 0.1.5/0.1.7/当前运行时三条都满足、把 `index.js` 的**出厂字节**放进一个 `node_modules` 指向该安装的临时目录里重新 import（这样绑定的是被测运行时的 cordis/typert-protocol，而不是仓库里 0.1.x 的旧版），并在**两种磁盘布局**（0.1.x 的目录 / 0.2.x 的 `session.v4.jsonl.zstd` 文件）上真删一次。
 
 `verify-typert-compat.mjs` 分两层：永远跑**复制自两个版本源码的规则**（§7(a) 那张表）；发现真实 DSH 安装时再用**安装里的 `validateTypertManifest` 和 `TypertRegistry` 本尊**把 host manifest 和 client contribution 各过一遍。真实安装探测顺序：`DSH_INSTALL_015` / `DSH_INSTALL_017` 环境变量 → 本机默认 DSH 安装目录（0.1.5）→ 仓库内 `.tmppkg/v017/`（`npm pack @deepseek-ai/*@0.1.7-rc.2` 解包出来的 0.1.7 包；`.tmppkg/`、`.npm-cache/` 已 gitignore）。缺席的安装会记 skip，不计失败。
 

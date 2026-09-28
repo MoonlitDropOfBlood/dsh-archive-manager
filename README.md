@@ -22,6 +22,7 @@
 > - **DSH < 0.1.7**：完整归档管理面板（侧栏底部"归档"按钮 → 分组列表 / 搜索 / 还原 / 删除）。
 > - **DSH ≥ 0.1.7**：DSH 自带归档管理（侧栏筛选"仅显示已归档"、行内取消归档），本插件**只补上它缺少的删除功能**——归档会话的 "…" 菜单里多一行"删除会话…"、行尾悬停多一个 🗑 按钮，点击弹出永久删除二次确认框；不再显示本插件自己的面板按钮。
 > - 识别方式是**特性检测**（0.1.7 新增的两个行操作槽位是否声明），不是版本号，因此任何中间版本都会落到正确的一侧。
+> - **支持 DSH 0.1.x 与 0.2.x**。0.2.0 起 DSH 会校验插件声明的 `@deepseek-ai/dsh*` peer 版本范围，不匹配就**整个 bundle 静默跳过**（插件直接消失，控制台只多一行 `skipping profile bundle ...`）；v1.5.0 已放行 0.2.x 并同时保留 0.1.x。
 
 ## 功能
 
@@ -94,6 +95,8 @@ dsh-archive-manager/
 ├── client.js           # Client 半：归档管理 UI bundle
 ├── typert.host.js      # Typert Host manifest（Remote 方法描述）
 ├── cordis.patch.yml    # dsh bundle patch（挂载行）
+├── verify-*.mjs        # 四个验证脚本（构造 / typert 线上契约 / client apply / 真实安装）
+├── scripts/            # check-profile-bundle.mjs：DSH 会不会跳过本插件的自检
 ├── .github/workflows/  # GitHub Actions 发布
 ├── AGENTS.md           # 面向 AI agent 的开发指南（含踩坑）
 └── LICENSE             # MIT
@@ -103,11 +106,16 @@ dsh-archive-manager/
 
 ```bash
 npm run check                    # node --check index.js client.js typert.host.js
-npm run verify                   # 三个验证脚本：构造 / 双版本 typert 线上契约 / client apply 冒烟
+npm run verify                   # 四个验证脚本：构造 / 双版本 typert 线上契约 / client apply 冒烟 / 真实 DSH 安装
+node scripts/check-profile-bundle.mjs --sandbox   # 用真实 dsh-app-boot 确认本插件不会被跳过
 dsh plugin --profile web add /path/to/dsh-archive-manager   # 安装/重装到本机 DSH profile
 ```
 
 `verify-typert-compat.mjs` 会用**真实 DSH 安装**里的 `validateTypertManifest` 与 `TypertRegistry` 校验本插件的线格式（同时覆盖 0.1.5 与 0.1.7 两套规则）：默认探测本机 DSH 安装与 `.tmppkg/v017/`（npm 拉取的 0.1.7 包），也可用 `DSH_INSTALL_015` / `DSH_INSTALL_017` 环境变量指定。
+
+`verify-real-install.mjs` 补的是另一个洞——前三个脚本跑在仓库自带的旧版依赖上，在"根本不加载插件"的 DSH 上也会全绿。它直接拿本机 DSH 安装的 `dsh-app-boot.evaluatePluginCompatibility` 跑 0.2.0 的 peer 闸门、断言 0.1.5/0.1.7/当前运行时三条版本线都满足、把 `index.js` 重新绑定到该安装的 cordis/typert-protocol 上构造服务，并在 0.1.x 与 0.2.x 两种磁盘布局上各真删一次会话。
+
+`scripts/check-profile-bundle.mjs --sandbox` 会建一个临时 profile、用软链把**本工作树**挂进去，再调用真实 dsh-app-boot 的 profile 加载器，直接回答"dsh 会不会跳过我"。它不碰任何 DSH home，所以随时可跑。
 
 详见 [AGENTS.md](AGENTS.md)——记录了 DSH 正式插件（Host/Client/Typert 三件套）的完整机制和踩坑。
 
