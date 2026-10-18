@@ -1,6 +1,6 @@
 {
   "name": "@duke-dsh-plugins/dsh-archive-manager",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Archive manager for DeepSeek Harness: DSH < 0.1.7 gets the grouped search/restore/delete panel; DSH >= 0.1.7 adds the delete action missing from the built-in archive management.",
   "repository": {
     "type": "git",
@@ -36,8 +36,8 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-storage-domain": "^0.1.0-rc.6 || ^0.2.0-rc.1",
-    "@deepseek-ai/dsh-typert-protocol": "^0.1.0-rc.6 || ^0.2.0-rc.1"
+    "@deepseek-ai/dsh-storage-domain": "^0.1.0-rc.6 || ^0.2.0-rc.1 || ^0.2.1-rc.0",
+    "@deepseek-ai/dsh-typert-protocol": "^0.1.0-rc.6 || ^0.2.0-rc.1 || ^0.2.1-rc.0"
   },
   "dependencies": {
     "zod": "^4.4.3"
