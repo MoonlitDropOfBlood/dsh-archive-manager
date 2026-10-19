@@ -1,15 +1,25 @@
 {
   "name": "@duke-dsh-plugins/dsh-archive-manager",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Archive manager for DeepSeek Harness: DSH < 0.1.7 gets the grouped search/restore/delete panel; DSH >= 0.1.7 adds the delete action missing from the built-in archive management.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MoonlitDropOfBlood/dsh-archive-manager.git"
   },
   "homepage": "https://github.com/MoonlitDropOfBlood/dsh-archive-manager",
-  "bugs": { "url": "https://github.com/MoonlitDropOfBlood/dsh-archive-manager/issues" },
-  "publishConfig": { "access": "public" },
-  "keywords": ["dsh", "deepseek-harness", "plugin", "session", "archive"],
+  "bugs": {
+    "url": "https://github.com/MoonlitDropOfBlood/dsh-archive-manager/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "session",
+    "archive"
+  ],
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -17,13 +27,15 @@
     "./client": "./client.js",
     "./typert": "./typert.host.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
     "client.js",
     "typert.host.js",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "icon.svg"
   ],
   "license": "MIT",
   "dsh": {
