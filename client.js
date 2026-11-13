@@ -130,8 +130,14 @@ window.__ModuleLoader__.load({
 .am-row-del[disabled]{opacity:.5;cursor:default;}
 
 /* Confirm dialog — same surface family as the legacy panel, compact width.
-   Rendered from the sidebar foot slot (fixed, root stacking context) so
-   dsh-better-sidebar's z-index:25 body layer cannot cover it. */
+   Rendered from the sidebar foot slot (fixed) so dsh-better-sidebar's
+   z-index:25 body layer cannot cover it. Note: the foot slot only joins the
+   ROOT stacking context while the sidebar column is not a stacking context
+   itself — that holds in the default (non-drawer) layout; in drawer mode
+   the host turns .sidebarCol into position:absolute;z-index:71, which DOES
+   form a stacking context, so the fixed layer is then confined to it (still
+   above better-sidebar's 25 because 71 > 25, but no longer root-level).
+   See the same note next to the footer slot registration. */
 .am-confirm{position:relative;display:flex;flex-direction:column;width:440px;max-width:calc(100vw - 48px);overflow:hidden;border:1px solid var(--dsw-alias-border-inverted,rgba(128,128,128,.3));border-radius:24px;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,inherit);box-shadow:var(--dsw-shadow-lv3,0 12px 40px rgba(0,0,0,.25));}
 .am-confirm .am-confirm-body{padding:4px 24px 16px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary,inherit);}
 .am-confirm .am-confirm-title{font-weight:500;font-size:16px;line-height:24px;color:var(--dsw-alias-label-primary,inherit);}
@@ -140,8 +146,8 @@ window.__ModuleLoader__.load({
 .am-confirm .am-confirm-note{color:var(--dsw-alias-label-tertiary,inherit);font-size:12px;line-height:18px;}
 .am-confirm .am-confirm-btn{border:1px solid var(--dsw-alias-border-l2,rgba(128,128,128,.2));background:transparent;color:var(--dsw-alias-label-primary,inherit);font-family:inherit;font-size:13px;line-height:18px;padding:6px 14px;border-radius:10px;cursor:pointer;}
 .am-confirm .am-confirm-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.12));}
-.am-confirm .am-confirm-btn.am-confirm-danger{border-color:transparent;background:var(--dsw-alias-state-error-primary,#e5484d);color:var(--dsw-alias-bg-base,#fff);}
-.am-confirm .am-confirm-btn.am-confirm-danger:hover{background:var(--dsw-alias-state-error-primary,#e5484d);filter:brightness(1.06);}
+.am-confirm .am-confirm-btn.am-confirm-danger{border-color:transparent;background:var(--dsw-alias-state-error-primary,#e5484d);color:var(--dsw-alias-label-on-color,#fff);}
+.am-confirm .am-confirm-btn.am-confirm-danger:hover{background:var(--dsw-alias-state-error-primary,#e5484d);color:var(--dsw-alias-label-on-color,#fff);filter:brightness(1.06);}
 .am-confirm .am-confirm-btn[disabled]{opacity:.5;cursor:default;}
 
 /* Sidebar footer entry (legacy mode only) */
@@ -827,8 +833,13 @@ window.__ModuleLoader__.load({
       // stacking context，把子元素 z-index 锁死在其下；而 dsh-better-sidebar 把
       // 整层 append 到 document.body（position:fixed; z-index:25），归档弹窗因此
       // 会被它盖住。设置弹窗（ui-settings）的做法是把全屏 fixed 遮罩
-      // （z-index:1000）从 sidebar.settings 槽渲染——侧栏列不构成 stacking
-      // context，fixed 层直接参与根 stacking context，压过 better-sidebar 的 25。
+      // （z-index:1000）从 sidebar.settings 槽渲染——**前提**：侧栏列此时不构成
+      // stacking context，fixed 层直接参与根 stacking context，压过
+      // better-sidebar 的 25。该前提只在默认（非 drawer）布局成立：drawer 模式下
+      // 宿主把 `.sidebarCol` 变成 position:absolute; z-index:71，自成层叠上下文，
+      // fixed 层被限制在该上下文内（仍高于 better-sidebar 的 25，因为 71 > 25，
+      // 但不再位于根 stacking context）。此处仅记录该前提，未改 .am-overlay 的
+      // z-index——drawer 模式下的层级结论属于另一个待确认问题（残留风险）。
       // 这里照搬同一做法：弹窗与按钮同从 sidebar.footer.action 槽渲染，两者共享
       // useOpen 状态，UI 行为不变。
       ctx.slots.inject("sidebar.footer.action", () => ctx.slots.register(

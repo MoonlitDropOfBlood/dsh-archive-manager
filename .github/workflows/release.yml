@@ -89,15 +89,18 @@ jobs:
           prerelease: false
           generate_release_notes: true
           body: |
-            ## ${{ github.ref_name }} — 兼容 DSH 0.2.0
+            ## ${{ github.ref_name }} — 修复暗色主题下「永久删除」按钮文字不可见
 
             ### 🐛 修复
-            - **DSH 0.2.x 上插件不再被静默跳过**：0.2.0 起 DSH 会校验插件声明的 `@deepseek-ai/dsh*` peer 版本范围，不匹配就整包不挂载（控制台只有一行 `skipping profile bundle ...`）。现在同时支持 0.1.x 与 0.2.x。
-            - **永久删除真正删干净**：0.2.0 的 `sessionPersistence.locate()` 返回的是日志*文件*而非会话*目录*，旧逻辑只删掉当前那一份日志、留下旧格式代次，重启后会话复活。现在统一删除整个会话目录。
+            - **暗色主题下「永久删除」按钮文字不可见**（红底 + 深色字）：删除确认框的 danger 按钮把字色写成了 `var(--dsw-alias-bg-base, #fff)`——那是**页面背景色**令牌，浅色主题下恰好是白色所以看不出来，暗色主题下是 `rgb(21,21,23)`（近黑），红底黑字完全不可读；壁纸类插件还会把它改写成 `transparent`，变成纯红块无字。现在改用宿主语义正确的反色令牌 `--dsw-alias-label-on-color`（深浅主题恒为 `rgb(255,255,255)`，且不受壁纸插件改写影响），hover 规则也显式锁死同一字色（hover 的 `filter:brightness(1.06)` 会把红底变亮）。
+            - 相关注释补齐前提条件：弹窗层级结论「侧栏列不构成 stacking context」只在默认（非 drawer）布局成立——drawer 模式下宿主把 `.sidebarCol` 变成 `position:absolute; z-index:71`，自成层叠上下文。仅修正注释措辞，未改动 `.am-overlay` 的 z-index。
+
+            ### 🧪 测试
+            - 新增 `verify-client-theme-tokens.mjs` 静态守卫：`.am-confirm-danger` 规则不得出现 `var(--dsw-alias-bg-base`，且必须使用 `--dsw-alias-label-on-color`（已串入 `npm run verify`）。
 
             ### 📦 安装（标准 DSH bundle）
             ```bash
-            dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/v1.5.0/duke-dsh-plugins-dsh-archive-manager-1.5.0.tgz
+            dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/v1.5.3/duke-dsh-plugins-dsh-archive-manager-1.5.3.tgz
             # 重启 DSH 后生效
             ```
           files: artifacts/*
