@@ -235,6 +235,39 @@ window.__ModuleLoader__.load({
       ],
     };
 
+    /**
+     * Strip the transport envelope(s) around one Remote method result.
+     *
+     * The DSH client connection hands back the RPC envelope `{ ok, value }`
+     * whose `value` is the HOST METHOD'S RESULT — which for this service is
+     * already the plugin's own business envelope `{ ok, value|error }`. Callers
+     * therefore observe `{ ok: true, value: { ok: true, value: { … } } }` on
+     * success and `{ ok: true, value: { ok: false, error: { … } } }` on a
+     * business failure. Checking the outer `ok` alone is always true (the RPC
+     * itself succeeded), which silently swallowed every business error —
+     * deleting a still-live session closed the confirm dialog as if it had
+     * worked while the archive entry stayed put, so the row only disappeared
+     * after a DSH restart (GitHub issue #2: "必须重启 dsh 后才能删除").
+     *
+     * Unwrap while (and only while) the inner object itself carries a boolean
+     * `ok`; our own payload objects (`{ ghostIds }`, `{ restored }`,
+     * `{ fileRemoved, live }`) never have one, so they are returned untouched.
+     * A gateway-level failure has no `value` and is returned as-is.
+     *
+     * @param {unknown} res - the value returned by `remote.<method>(…)`.
+     * @returns {unknown} the plugin's own `{ ok, value|error }` result.
+     */
+    function unwrapRemoteResult(res) {
+      let current = res;
+      for (let depth = 0; depth < 4; depth += 1) {
+        if (!current || typeof current !== "object" || current.ok !== true) break;
+        const inner = current.value;
+        if (!inner || typeof inner !== "object" || typeof inner.ok !== "boolean") break;
+        current = inner;
+      }
+      return current;
+    }
+
     async function apply(ctx) {
       // Mount the archiveManager namespace before anything touches it; the
       // mount's lifetime is bound to this plugin's context by $mount itself.
@@ -289,8 +322,12 @@ window.__ModuleLoader__.load({
       function useGhostIds() { return React.useSyncExternalStore(ghostStore.subscribe, ghostStore.getSnapshot); }
       async function refreshState() {
         try {
-          const res = await remote.state();
-          ghostStore.set(res && res.ok && Array.isArray(res.value.ghostIds) ? res.value.ghostIds : []);
+          // Unwrap the transport envelope first: without it the plugin's own
+          // `{ ok, value }` result is still nested one level down, so
+          // `res.value.ghostIds` would always be undefined and every ghost
+          // would keep its delete affordance.
+          const res = unwrapRemoteResult(await remote.state());
+          ghostStore.set(res && res.ok && res.value && Array.isArray(res.value.ghostIds) ? res.value.ghostIds : []);
         } catch {
           ghostStore.set([]);
         }
@@ -502,7 +539,11 @@ window.__ModuleLoader__.load({
           setBusy(action + ":" + sessionId);
           setError(null);
           try {
-            const res = await remote[action]({ sessionId });
+            // The transport wraps the Host method's result in its own
+            // `{ ok, value }` envelope; unwrap it so the plugin's business
+            // `ok:false` (running agent, locked file, locate unavailable)
+            // actually reaches the error line instead of being swallowed.
+            const res = unwrapRemoteResult(await remote[action]({ sessionId }));
             if (res && res.ok) {
               if (action === "delete") {
                 try {
@@ -753,7 +794,13 @@ window.__ModuleLoader__.load({
           setBusy(true);
           setError(null);
           try {
-            const res = await remote.delete({ sessionId: req.sessionId });
+            // Unwrap the transport envelope: the Host result is
+            // `{ ok, value:{ fileRemoved, live } }`, and only the inner
+            // `live` tells us whether the target is still resident in memory.
+            // Reading it through the double envelope always yielded
+            // `undefined`, which closed the dialog as a silent no-op and left
+            // the row in place until the next DSH restart (issue #2).
+            const res = unwrapRemoteResult(await remote.delete({ sessionId: req.sessionId }));
             if (res && res.ok) {
               try {
                 const sessions = ctx.get("sessions");
@@ -794,7 +841,7 @@ window.__ModuleLoader__.load({
             React.createElement(
               "div", { className: "am-confirm-body" },
               ghost
-                ? "日志文件已删除。该会话仍驻留内存，删除条目将在重启 DSH 后自动清除。"
+                ? "日志文件已删除。该会话仍驻留在 DSH 内存中，侧栏条目会在重启 DSH 后消失（无需再次删除）。"
                 : "将永久删除「" + title + "」的会话日志文件，此操作不可恢复。"
             ),
             error && !ghost
@@ -934,6 +981,10 @@ window.__ModuleLoader__.load({
     // Exposed for verify-typert-compat.mjs (the browser wiring contract has
     // to satisfy both DSH typert registries; nothing else reads this).
     exports.CLIENT_REMOTE = CLIENT_REMOTE;
+    // Exposed for verify-client-apply.mjs: the transport-envelope unwrapping
+    // that every Remote result goes through is pure and cheap to test, and a
+    // regression there silently turns delete/state into no-ops.
+    exports.__test = { unwrapRemoteResult };
     return module.exports;
   },
 });

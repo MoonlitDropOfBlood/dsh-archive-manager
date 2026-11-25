@@ -308,6 +308,161 @@ if (host) {
     });
   }
 
+  // The live path must not depend on the corpus listing: a just-archived
+  // session is still resident, its own header is the authoritative location
+  // source, and the archive entry must survive as a ghost until restart.
+  await attempt("delete() uses the live session header and keeps the ghost entry", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "dsh-archive-manager-live-"));
+    try {
+      const dir = path.join(root, "project", "session-under-test");
+      mkdirSync(dir, { recursive: true });
+      const located = path.join(dir, "session.v4.jsonl.zstd");
+      writeFileSync(located, "current log");
+      const writes = [];
+      let listings = 0;
+      const workspaceState = { archivedSessionIds: ["session-under-test"] };
+      const ctx = makeCtx({
+        sessionPersistence: { locate: () => ({ kind: "jsonl", path: located }) },
+        sessionQuery: { listSessions: async () => { listings += 1; return []; } },
+        sessions: { get: () => ({ header: { id: "session-under-test", cwd: "project" } }) },
+        agents: { get: () => undefined },
+        storageDomain: { get: (name) => (name === "workspace" ? { global: { get: () => workspaceState } } : undefined) },
+        workspaceRegistry: {
+          get archivedSessionIds() {
+            return workspaceState.archivedSessionIds;
+          },
+          setState: async (state) => {
+            workspaceState.archivedSessionIds = state.archivedSessionIds;
+            writes.push(state);
+          },
+        },
+      });
+      const instance = new host.ArchiveManagerService(ctx, {});
+      instance[host.Service.init]();
+      const result = await instance.delete({ sessionId: "session-under-test" });
+      if (!result.ok) throw new Error(`delete returned ${JSON.stringify(result.error)}`);
+      if (result.value.fileRemoved !== true) throw new Error(`fileRemoved=${result.value.fileRemoved}`);
+      if (result.value.live !== true) throw new Error("live flag was not reported");
+      if (existsSync(dir)) throw new Error(`live session directory survived at ${dir}`);
+      if (listings !== 0) throw new Error("the live header path still scanned the stored corpus");
+      if (writes.length !== 0) throw new Error("the ghost archive entry was cleared before restart");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // DSH >= 0.1.7 `sessionPersistence.list()` returns `{ header, … }` snapshots;
+  // the fallback must read that shape (it used to look for a bare `id`).
+  await attempt("delete() resolves a header from sessionPersistence.list() snapshots", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "dsh-archive-manager-fallback-"));
+    try {
+      const dir = path.join(root, "project", "session-under-test");
+      mkdirSync(dir, { recursive: true });
+      const located = path.join(dir, "session.v4.jsonl.zstd");
+      writeFileSync(located, "current log");
+      const writes = [];
+      const workspaceState = { archivedSessionIds: ["session-under-test"] };
+      const ctx = makeCtx({
+        sessionPersistence: {
+          locate: () => ({ kind: "jsonl", path: located }),
+          list: async () => [{ header: { id: "session-under-test", cwd: "project" }, formatStatus: "current" }],
+        },
+        sessionQuery: { listSessions: async () => { throw new Error("query index unavailable"); } },
+        sessions: { get: () => undefined },
+        agents: { get: () => undefined },
+        storageDomain: { get: (name) => (name === "workspace" ? { global: { get: () => workspaceState } } : undefined) },
+        workspaceRegistry: {
+          get archivedSessionIds() {
+            return workspaceState.archivedSessionIds;
+          },
+          setState: async (state) => {
+            workspaceState.archivedSessionIds = state.archivedSessionIds;
+            writes.push(state);
+          },
+        },
+      });
+      const instance = new host.ArchiveManagerService(ctx, {});
+      instance[host.Service.init]();
+      const result = await instance.delete({ sessionId: "session-under-test" });
+      if (!result.ok) throw new Error(`delete returned ${JSON.stringify(result.error)}`);
+      if (result.value.fileRemoved !== true) throw new Error(`fileRemoved=${result.value.fileRemoved}`);
+      if (existsSync(dir)) throw new Error(`session directory survived at ${dir} — the { header } snapshot shape was not read`);
+      if (writes.length !== 1) throw new Error("archive entry was not cleared for a non-live session");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // `state()` also drives the once-per-process archive-set hygiene: an id
+  // whose session is neither live nor stored is pruned, a live ghost and a
+  // stored session stay archived.
+  await attempt("state() prunes archive ids whose session is gone completely", async () => {
+    const writes = [];
+    const workspaceState = {
+      archivedSessionIds: ["session-live-ghost", "session-stale", "session-stored"],
+    };
+    const ctx = makeCtx({
+      sessionPersistence: {
+        locate: (header) => ({ kind: "jsonl", path: path.join(os.tmpdir(), "no-such-artifact", header.id) }),
+      },
+      sessionQuery: { listSessions: async () => [{ header: { id: "session-stored", cwd: "project" }, live: false }] },
+      sessions: {
+        get: (id) => (id === "session-live-ghost" ? { header: { id, cwd: "project" } } : undefined),
+      },
+      agents: { get: () => undefined },
+      storageDomain: { get: (name) => (name === "workspace" ? { global: { get: () => workspaceState } } : undefined) },
+      workspaceRegistry: {
+        get archivedSessionIds() {
+          return workspaceState.archivedSessionIds;
+        },
+        setState: async (state) => {
+          workspaceState.archivedSessionIds = state.archivedSessionIds;
+          writes.push(state);
+        },
+      },
+    });
+    const instance = new host.ArchiveManagerService(ctx, {});
+    instance[host.Service.init]();
+    const result = await instance.state();
+    await instance.reconcileArchived();
+    if (!result.ok) throw new Error(`state returned ${JSON.stringify(result.error)}`);
+    if (!result.value.ghostIds.includes("session-live-ghost")) throw new Error("the live ghost was not reported");
+    if (writes.length !== 1) throw new Error(`expected one cleanup write, got ${writes.length}`);
+    const kept = writes[0].archivedSessionIds;
+    if (JSON.stringify(kept) !== JSON.stringify(["session-live-ghost", "session-stored"])) {
+      throw new Error(`unexpected archive set after cleanup: ${JSON.stringify(kept)}`);
+    }
+  });
+
+  // A failed corpus listing must keep every entry: guessing "not listed"
+  // would silently unarchive live sessions.
+  await attempt("state() keeps the archive set when the corpus cannot be listed", async () => {
+    const writes = [];
+    const workspaceState = { archivedSessionIds: ["session-unknown"] };
+    const ctx = makeCtx({
+      sessionPersistence: { locate: () => ({ path: path.join(os.tmpdir(), "no-such-artifact") }) },
+      sessionQuery: { listSessions: async () => { throw new Error("query index unavailable"); } },
+      sessions: { get: () => undefined },
+      agents: { get: () => undefined },
+      storageDomain: { get: (name) => (name === "workspace" ? { global: { get: () => workspaceState } } : undefined) },
+      workspaceRegistry: {
+        get archivedSessionIds() {
+          return workspaceState.archivedSessionIds;
+        },
+        setState: async (state) => {
+          workspaceState.archivedSessionIds = state.archivedSessionIds;
+          writes.push(state);
+        },
+      },
+    });
+    const instance = new host.ArchiveManagerService(ctx, {});
+    instance[host.Service.init]();
+    await instance.state();
+    await instance.reconcileArchived();
+    if (writes.length !== 0) throw new Error("the archive set was rewritten without a corpus listing");
+    if (workspaceState.archivedSessionIds.length !== 1) throw new Error("the archived id was dropped");
+  });
+
   await attempt("delete() refuses a running agent without touching disk", async () => {
     const root = mkdtempSync(path.join(os.tmpdir(), "dsh-archive-manager-running-"));
     try {

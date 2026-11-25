@@ -64,6 +64,42 @@ const capturedRequire = (spec) => {
 
 const clientExports = entry.factory(capturedRequire);
 
+// The client connection hands every Remote result back inside its own RPC
+// envelope `{ ok, value }`, so the plugin's own `{ ok, value|error }` result
+// is nested one level down. These are the real wire shapes (verified against
+// a live DSH 0.2.2 gateway); every component-level result check depends on the
+// helper peeling them correctly.
+const unwrapRemoteResult = clientExports.__test && clientExports.__test.unwrapRemoteResult;
+if (typeof unwrapRemoteResult !== "function") {
+  fail("client exports the envelope unwrapping helper", new Error("clientExports.__test.unwrapRemoteResult is missing"));
+} else {
+  const ghost = { ok: true, value: { ghostIds: ["session-a"] } };
+  expect(
+    JSON.stringify(unwrapRemoteResult({ ok: true, value: ghost })) === JSON.stringify(ghost),
+    "unwrap: single transport envelope collapses to the business result"
+  );
+  expect(
+    JSON.stringify(unwrapRemoteResult({ ok: true, value: { ok: true, value: ghost.value } })) === JSON.stringify(ghost),
+    "unwrap: double envelope (client transport over the Host result) collapses fully"
+  );
+  expect(
+    JSON.stringify(unwrapRemoteResult({ ok: true, value: { fileRemoved: true, live: false } })) ===
+      JSON.stringify({ ok: true, value: { fileRemoved: true, live: false } }),
+    "unwrap: a bare transport payload without a business envelope is untouched"
+  );
+  expect(
+    JSON.stringify(unwrapRemoteResult({ ok: true, value: { ok: false, error: { code: "agent-running" } } })) ===
+      JSON.stringify({ ok: false, error: { code: "agent-running" } }),
+    "unwrap: a business failure reaches the caller as ok:false"
+  );
+  const gatewayError = { ok: false, error: { code: "gateway/internal" } };
+  expect(
+    JSON.stringify(unwrapRemoteResult(gatewayError)) === JSON.stringify(gatewayError),
+    "unwrap: a gateway-level failure is returned untouched"
+  );
+  expect(unwrapRemoteResult(null) === null && unwrapRemoteResult(undefined) === undefined, "unwrap: nullish results pass through");
+}
+
 // --- fake ctx --------------------------------------------------------------
 const injects = [];
 const registrations = [];
@@ -71,15 +107,17 @@ const disposers = [];
 const remoteCalls = { state: 0 };
 
 const fakeRemote = {
+  // Real wire shape: the connection's `{ ok, value }` envelope wraps the
+  // plugin's own `{ ok, value }` business result.
   async state() {
     remoteCalls.state += 1;
-    return { ok: true, value: { ghostIds: [] } };
+    return { ok: true, value: { ok: true, value: { ghostIds: [] } } };
   },
   async restore() {
-    return { ok: true, value: { restored: true } };
+    return { ok: true, value: { ok: true, value: { restored: true } } };
   },
   async delete() {
-    return { ok: true, value: { fileRemoved: true, live: false } };
+    return { ok: true, value: { ok: true, value: { fileRemoved: true, live: false } } };
   },
 };
 

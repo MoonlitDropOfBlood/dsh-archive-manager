@@ -89,20 +89,31 @@ jobs:
           prerelease: false
           generate_release_notes: true
           body: |
-            ## ${{ github.ref_name }} — 修复暗色主题下「永久删除」按钮文字不可见
+            ## ${{ github.ref_name }} — 修复「删除会话必须重启 dsh」
 
-            ### 🐛 修复
-            - **暗色主题下「永久删除」按钮文字不可见**（红底 + 深色字）：删除确认框的 danger 按钮把字色写成了 `var(--dsw-alias-bg-base, #fff)`——那是**页面背景色**令牌，浅色主题下恰好是白色所以看不出来，暗色主题下是 `rgb(21,21,23)`（近黑），红底黑字完全不可读；壁纸类插件还会把它改写成 `transparent`，变成纯红块无字。现在改用宿主语义正确的反色令牌 `--dsw-alias-label-on-color`（深浅主题恒为 `rgb(255,255,255)`，且不受壁纸插件改写影响），hover 规则也显式锁死同一字色（hover 的 `filter:brightness(1.06)` 会把红底变亮）。
-            - 相关注释补齐前提条件：弹窗层级结论「侧栏列不构成 stacking context」只在默认（非 drawer）布局成立——drawer 模式下宿主把 `.sidebarCol` 变成 `position:absolute; z-index:71`，自成层叠上下文。仅修正注释措辞，未改动 `.am-overlay` 的 z-index。
+            ### 🐛 修复（#2）
+            - **点「永久删除」没反应、必须重启 DSH 后再删一次**：客户端把 `remote.*()` 的返回值当成业务结果用，但 DSH 的 client connection 外面还包了一层 RPC 信封，实际拿到的是**双层** `{ ok:true, value:{ ok:true, value:{…} } }`。旧代码只判外层 `res.ok`（传输成功永远为 true），于是：
+              - `delete()` 的 `res.value.live` 恒为 `undefined` → 确认框静默关闭，用户以为失败；
+              - `state()` 的 `res.value.ghostIds` 恒为 `undefined` → ghost 行不隐藏，删除按钮继续显示；
+              - `agent-running` / `delete-failed` / `locate-unavailable` 等业务失败原因全部被吞掉。
+              新增 `unwrapRemoteResult()` 只在内层对象自带 boolean `ok` 时剥壳，业务 payload 原样返回；`state` / `delete` / 旧面板 `restore|delete` 三处统一走它。
+            - **live 会话定位**：`sessions.get(id)` 非空时直接用活会话自身 header（不再全量扫描语料）；非 live 才走 `findHeader()`。
+            - **`sessionPersistence.list()` 快照解析**：DSH ≥ 0.1.7 返回 `{ header, formatStatus }` 快照，旧回退按裸 header 查找永远落空，已兼容两种形状。
+            - **Windows 瞬时文件锁**：`rm` 重试提升到 5 次 / 250ms。
+            - **归档集合自愈**：ghost 条目在重启后由 `state()` 触发每进程一次的清理（列举失败则整批保留，不猜删）。
+            - 删除确认框的 ghost 文案改为「侧栏条目会在重启 DSH 后消失（无需再次删除）」。
 
             ### 🧪 测试
-            - 新增 `verify-client-theme-tokens.mjs` 静态守卫：`.am-confirm-danger` 规则不得出现 `var(--dsw-alias-bg-base`，且必须使用 `--dsw-alias-label-on-color`（已串入 `npm run verify`）。
+            - `verify-client-apply.mjs` 新增信封剥离单测（单层/双层/裸 payload/业务失败/网关失败/nullish），fake remote 改为真实双层线形。
+            - `verify-real-install.mjs` 新增 4 条用例：live 会话自身 header + 保留 ghost 条目、`{ header }` 快照解析、stale 条目清理、列举失败不清理。
+            - 真机 headless 客户端实测：修复前 ghost 行仍显示 🗑；修复后该行删除入口消失。
 
             ### 📦 安装（标准 DSH bundle）
             ```bash
-            dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/v1.5.3/duke-dsh-plugins-dsh-archive-manager-1.5.3.tgz
+            dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/${{ github.ref_name }}/duke-dsh-plugins-dsh-archive-manager-1.5.4.tgz
             # 重启 DSH 后生效
             ```
+            > 注意：npm 包名带 scope，`npm pack` 产物文件名是 `duke-dsh-plugins-dsh-archive-manager-1.5.4.tgz`（不带 `v`），若链接 404 请以 Release 附件实际文件名为准。
           files: artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}

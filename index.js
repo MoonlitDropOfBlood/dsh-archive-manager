@@ -171,8 +171,15 @@ export class ArchiveManagerService extends TypertRemoteService {
     const sessionPersistence = this.ctx.get("sessionPersistence");
     if (sessionPersistence && typeof sessionPersistence.list === "function") {
       try {
-        const headers = await sessionPersistence.list();
-        return headers.find((h) => String(h.id) === sessionId);
+        const stored = await sessionPersistence.list();
+        // DSH >= 0.1.7 returns `{ header, formatStatus, revision }` snapshots
+        // from `list()`; older builds may hand back bare headers. Accept both
+        // shapes (the previous version only handled the bare header, so this
+        // fallback always missed on every modern DSH).
+        const match = stored.find((snapshot) =>
+          String(snapshot && snapshot.header ? snapshot.header.id : snapshot && snapshot.id) === sessionId
+        );
+        if (match) return match.header ? match.header : match;
       } catch {
         /* fall through */
       }
@@ -224,7 +231,16 @@ export class ArchiveManagerService extends TypertRemoteService {
     if (agent !== undefined && agent.status === "running") {
       return { ok: false, error: { code: "agent-running", message: "该会话的智能体正在运行中，请等待其完成或停止后再删除" } };
     }
-    const header = await this.findHeader(sessionId);
+    // A live session's header is authoritative and free to read; only a
+    // non-live target needs the (potentially expensive) corpus listing.
+    const sessions = this.ctx.get("sessions");
+    let liveSession;
+    try {
+      liveSession = sessions ? sessions.get(sessionId) : undefined;
+    } catch {
+      liveSession = undefined;
+    }
+    const header = liveSession ? liveSession.header : await this.findHeader(sessionId);
     const sessionPersistence = this.ctx.get("sessionPersistence");
     if (header && (!sessionPersistence || typeof sessionPersistence.locate !== "function")) {
       // The header exists but this build cannot tell us where its log lives.
@@ -258,7 +274,7 @@ export class ArchiveManagerService extends TypertRemoteService {
         // absorbs transient Windows file locks (antivirus / indexers) and is
         // a no-op elsewhere. The whole owning session directory goes, so older
         // format generations cannot survive the delete (DSH >= 0.2.0).
-        await rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+        await rm(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 });
         removed = !existsSync(target);
         if (!removed) fileError = "path-still-exists";
       } catch (error) {
@@ -273,8 +289,7 @@ export class ArchiveManagerService extends TypertRemoteService {
         error: { code: "delete-failed", message: "删除会话文件失败（" + (fileError || "未知错误") + "），已保留归档条目" },
       };
     }
-    const sessions = this.ctx.get("sessions");
-    const live = !!(sessions && sessions.get(sessionId) !== undefined);
+    const live = liveSession !== undefined;
     if (!live) {
       const ids = readArchived.call(this, this.workspaceDomain());
       if (ids.includes(sessionId)) {
@@ -289,9 +304,88 @@ export class ArchiveManagerService extends TypertRemoteService {
   }
 
   /**
+   * Resolve every stored session id from the authoritative corpus, or
+   * `undefined` when neither source can list it (callers must not guess:
+   * pruning on a failed listing would drop live archive entries).
+   *
+   * @returns {Promise<Set<string>|undefined>} stored ids, or undefined.
+   */
+  async listStoredIds() {
+    const sessionQuery = this.ctx.get("sessionQuery");
+    if (sessionQuery && typeof sessionQuery.listSessions === "function") {
+      try {
+        const records = await sessionQuery.listSessions();
+        const ids = new Set();
+        for (const record of records) {
+          const header = record && record.header ? record.header : record;
+          if (header && header.id !== undefined) ids.add(String(header.id));
+        }
+        return ids;
+      } catch {
+        /* fall through to the persistence listing */
+      }
+    }
+    const sessionPersistence = this.ctx.get("sessionPersistence");
+    if (sessionPersistence && typeof sessionPersistence.list === "function") {
+      try {
+        const snapshots = await sessionPersistence.list();
+        const ids = new Set();
+        for (const snapshot of snapshots) {
+          const header = snapshot && snapshot.header ? snapshot.header : snapshot;
+          if (header && header.id !== undefined) ids.add(String(header.id));
+        }
+        return ids;
+      } catch {
+        /* cannot know */
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * One-shot archive-set hygiene: drop ids whose session is neither live nor
+   * stored any more.
+   *
+   * A live `delete` deliberately keeps the archive entry (the resident session
+   * must not "revive" in the sidebar), so after the next DSH start that session
+   * is gone together with its log while the id would linger in the durable
+   * archive set forever. This prunes exactly those ids, at most once per
+   * process, and only when a full corpus listing succeeded.
+   *
+   * @returns {Promise<void>} settles after the (possibly) written cleanup.
+   */
+  reconcileArchived() {
+    if (this.reconcileRun === undefined) {
+      this.reconcileRun = (async () => {
+        try {
+          const stored = await this.listStoredIds();
+          if (stored === undefined) return;
+          const sessions = this.ctx.get("sessions");
+          const ids = readArchived.call(this, this.workspaceDomain());
+          const stale = ids.filter((id) => {
+            let live = false;
+            try {
+              live = !!(sessions && sessions.get(id) !== undefined);
+            } catch {
+              live = false;
+            }
+            return !live && !stored.has(id);
+          });
+          if (stale.length === 0) return;
+          await this.writeArchived(ids.filter((id) => !stale.includes(id)));
+        } catch {
+          /* best-effort hygiene; the archive set is unchanged */
+        }
+      })();
+    }
+    return this.reconcileRun;
+  }
+
+  /**
    * State: report archived sessions that are still live in memory while their
    * log files no longer exist. The Client hides these (ghost) and tells the
-   * user they clear on restart.
+   * user they clear on restart. Also kicks the once-per-process cleanup of
+   * archive ids whose session is gone completely (see `reconcileArchived`).
    */
   async state() {
     const sessions = this.ctx.get("sessions");
@@ -299,6 +393,7 @@ export class ArchiveManagerService extends TypertRemoteService {
     if (!sessions || !sessionPersistence || typeof sessionPersistence.locate !== "function") {
       return { ok: true, value: { ghostIds: [] } };
     }
+    void this.reconcileArchived();
     const ids = readArchived.call(this, this.workspaceDomain());
     const ghostIds = [];
     for (const id of ids) {

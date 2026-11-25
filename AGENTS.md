@@ -121,7 +121,8 @@ window.__ModuleLoader__.load({
 要点：
 - `exports.inject` 声明依赖：`["slots", "remote", "remote.archiveManager"]`。用 `ctx.slots` 必须声明 `"slots"`；用 `ctx.remote.archiveManager` 必须声明 `"remote.archiveManager"`，否则 "cannot get property x without inject"。
 - **CSS 注入**用 `document.createElement("style")`（动态插件的 `styles.insert` 在这里不存在），并 `ctx.effect(() => () => styleTag.remove())` 清理。
-- **调用 Host**：`ctx.remote.archiveManager.restore({ sessionId })` 返回 `{ ok, value|error }`。
+- **调用 Host**：`ctx.remote.archiveManager.restore({ sessionId })` 的**传输层**返回 `{ ok, value }`，其中 `value` 才是本服务自己的业务包 `{ ok, value|error }`——所以调用方实际拿到的是**双层信封** `{ ok:true, value:{ ok:true, value:{…} } }`。`client.js` 的 `unwrapRemoteResult()` 负责剥掉传输层，再做业务判断；**不要**只判外层 `res.ok`（传输成功永远为 true，会把 `agent-running` / `delete-failed` 等业务失败静默吞掉，1.5.3 的「删除必须重启」issue #2 就是这么来的）。
+- **业务结果判定必须走内层**：`state()` 的 ghost 列表在 `res.value.ghostIds`、`delete()` 的 `live` 在 `res.value.live`、失败原因在 `res.error.message`。
 - 样式一律用 DSH 主题变量（`--dsw-alias-*`、`--dsw-specific-*`、`--dsw-shadow-lv2` 等），自动适配明暗主题。
 
 ### 5. 标准安装 = dsh bundle（package.json 声明 + 包内 cordis.patch.yml）
@@ -143,11 +144,12 @@ DSH 插件通过 **cordis composition** 挂载。本插件是**标准 DSH bundle
 
 ### 6. 删除会话的实现要点
 
-- **定位**：`sessionPersistence.locate(header)` → `{ path }`。**0.2.0 起这个 `path` 变成了会话目录里的日志"文件"**（`…/<project>/<sessionId>/session.v4.jsonl.zstd`），0.1.x 返回的是会话**目录**本身——见 §8(b)，`deletionTarget()` 负责统一。
-- **删除**：直接用 `node:fs/promises` 的 `rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })`，再用 `existsSync` 验证。**跨平台**（Windows / macOS / Linux 行为一致），不拼任何 shell 命令。
+- **定位**：`sessionPersistence.locate(header)` → `{ path }`。**0.2.0 起这个 `path` 变成了会话目录里的日志"文件"**（`…/<project>/<sessionId>/session.v4.jsonl.zstd`），0.1.x 返回的是会话**目录**本身——见 §8(b)，`deletionTarget()` 负责统一。目标仍在内存里（`sessions.get(id)` 非空）时直接用**活会话自己的 header**，只有非 live 会话才走 `findHeader()` 的持久语料列表（`sessionQuery.listSessions()` → `sessionPersistence.list()` 的 `{ header }` 快照）。
+- **删除**：直接用 `node:fs/promises` 的 `rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 250 })`，再用 `existsSync` 验证。**跨平台**（Windows / macOS / Linux 行为一致），不拼任何 shell 命令。
   - 历史上的 Windows-only 实现是通过 `shell` 服务拼 PowerShell（`Remove-Item` + `Test-Path`），并以 `sandboxPolicy: danger-full-access` 提升绕过沙箱——已废弃。composition 插件跑在 DSH 主进程内、自带完整 Node 权限，直接 `fs` 调用与当年的 `danger-full-access` 等效，且不再依赖 shell 服务 / pwsh 是否存在。
   - `maxRetries` 用来吸收 Windows 上的瞬时文件锁（杀软 / 索引器），其他平台是 no-op。
 - **ghost 检测（`state`）**：逐条 `existsSync(locate(header).path)`——live 但日志目录不存在 → ghost。原来也是拼 PowerShell 批量 `Test-Path`，同样已换成 `node:fs`。
+- **归档集合自愈（`reconcileArchived`）**：ghost 的归档条目按设计保留到重启；重启后会话与日志都没了，条目会永远留在 `archivedSessionIds` 里。`state()` 每次调用会 fire-and-forget 触发**每进程一次**的清理：先拿 `sessionQuery.listSessions()`（失败再退 `sessionPersistence.list()`）的全量 id，只删"既不 live 也不在持久语料里"的条目；**任何一次列举失败都整批保留**（绝不在信息不全时猜着删，否则会把活会话的归档条目弄丢）。
 - **正在运行**：只有 `agent.status === "running"` 才拒绝删除；`sessions.get(id)` 非空只表示"打开着"，允许删（idle 会话删日志后保留归档条目，作为 ghost，重启后彻底消失，避免在侧栏"复活"）。
 - **还原**：通过 `workspaceRegistry.setState({ ...state, archivedSessionIds: next })` 写回归档集合——一次调用同时持久化、同步 registry 缓存、并触发 `domain/changed` → 客户端 `host/archived-sessions-changed` 自动刷新。不要直接改 `~/.dsh/storages/workspace.json`（会绕过内存缓存导致不一致）。
 
