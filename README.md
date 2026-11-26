@@ -34,7 +34,7 @@
 | ♻️ 还原 | 从归档集合移除，会话回到侧栏项目原位 |
 | 🗑️ 删除 | 永久删除会话日志 + 移除归档记录；二次确认；运行中的智能体会拦截 |
 | 🧹 无效记录清理 | "日志已不存在"的残留归档记录单独分组，可一键清理 |
-| 👻 已删会话提示 | 已删除但仍驻留内存的会话自动隐藏，提示重启后彻底清除 |
+| 👻 已删会话提示 | 删除成功后侧栏行立即移除；仍驻留内存的会话在重启 DSH 后彻底清除 |
 | 🌗 主题适配 | 全部使用 DSH 设计 token，明暗主题自动跟随 |
 | 🖥 跨平台 | Host 半只用 Node.js `fs` API，Windows / macOS / Linux 均可运行 |
 
@@ -49,7 +49,7 @@
 dsh plugin --profile web add /path/to/dsh-archive-manager
 
 # 正式发布：从 GitHub Release tarball 安装
-dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/v1.3.0/dsh-archive-manager-1.3.0.tgz
+dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/v1.5.5/dsh-archive-manager-1.5.5.tgz
 ```
 
 重启 DSH 后生效：**DSH < 0.1.7** 会在侧栏底部（Cordis Plugin 下方、设置上方）出现"归档"按钮；**DSH ≥ 0.1.7** 则在归档会话行上出现删除入口（见"使用"）。
@@ -73,7 +73,7 @@ dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-m
 2. 归档会话行上任选其一发起删除：
    - 行尾悬停的 **🗑 按钮**；
    - "…" 菜单里的 **删除会话…**（危险红行，位于取消归档之后）。
-3. 弹出确认框后点 **永久删除**；运行中的智能体会被拦截，失败原因显示在框内；已删除但驻留内存的会话会提示重启后清除。
+3. 弹出确认框后点 **永久删除**；运行中的智能体会被拦截，失败原因显示在框内；删除成功后侧栏行**立即**消失，仍驻留内存的会话在重启 DSH 后彻底清除。
 
 ## 工作原理
 

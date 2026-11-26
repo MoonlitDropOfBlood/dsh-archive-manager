@@ -20,7 +20,7 @@
 - 按**项目（工作区）分组**展示归档会话，组内按**最新更新时间倒序**。
 - 支持**搜索**（标题 / 项目名）。
 - 每个归档可**还原**（回到侧栏项目原位）或**删除**（永久删除日志 + 移除归档记录，二次确认，运行中的智能体会拦截）。
-- 自动识别"日志已不存在的无效归档记录"和"已删除但仍驻留内存的 ghost 会话"，保持计数准确。
+- 自动识别"日志已不存在的无效归档记录"和"已删除但仍驻留内存的 ghost 会话"；ghost 的侧栏行在删除成功后立即移除/隐藏，不会留到重启。
 
 ## 目录结构
 
@@ -150,7 +150,8 @@ DSH 插件通过 **cordis composition** 挂载。本插件是**标准 DSH bundle
   - `maxRetries` 用来吸收 Windows 上的瞬时文件锁（杀软 / 索引器），其他平台是 no-op。
 - **ghost 检测（`state`）**：逐条 `existsSync(locate(header).path)`——live 但日志目录不存在 → ghost。原来也是拼 PowerShell 批量 `Test-Path`，同样已换成 `node:fs`。
 - **归档集合自愈（`reconcileArchived`）**：ghost 的归档条目按设计保留到重启；重启后会话与日志都没了，条目会永远留在 `archivedSessionIds` 里。`state()` 每次调用会 fire-and-forget 触发**每进程一次**的清理：先拿 `sessionQuery.listSessions()`（失败再退 `sessionPersistence.list()`）的全量 id，只删"既不 live 也不在持久语料里"的条目；**任何一次列举失败都整批保留**（绝不在信息不全时猜着删，否则会把活会话的归档条目弄丢）。
-- **正在运行**：只有 `agent.status === "running"` 才拒绝删除；`sessions.get(id)` 非空只表示"打开着"，允许删（idle 会话删日志后保留归档条目，作为 ghost，重启后彻底消失，避免在侧栏"复活"）。
+- **正在运行**：只有 `agent.status === "running"` 才拒绝删除；`sessions.get(id)` 非空只表示"打开着"，允许删（idle 会话删日志后保留归档条目，作为 ghost）。
+- **删完立即从侧栏消失（0.2.x）**：删日志**不会**销毁宿主内存里的 Session 对象，而 `session/list` 是 live-preferred（见注意事项最后一条）——只删文件时行会留到重启。客户端删除成功后先 `await sessions.refresh()`（把在途的 Host 列表拉取结算掉，否则它的迟到结果会把行重新加回来），再调用 `sessions.handleSessionRemoved(id)`——shell 处理 `api-session/removed` 的同一入口，**未列入公开 `ISessions` 契约**，必须 `typeof === "function"` 特性检测。0.1.x 客户端没有这个入口时退回 `[data-row-key="session:<id>"]` 的 CSS 隐藏（`ghostStyleTag` 随 `state()` 的 ghost 集合重写）。`sessions.list` 每次变化都会重扫 ghost 集合，避免 reconnect 重新拉取后行又出现。
 - **还原**：通过 `workspaceRegistry.setState({ ...state, archivedSessionIds: next })` 写回归档集合——一次调用同时持久化、同步 registry 缓存、并触发 `domain/changed` → 客户端 `host/archived-sessions-changed` 自动刷新。不要直接改 `~/.dsh/storages/workspace.json`（会绕过内存缓存导致不一致）。
 
 ### 7. DSH 0.1.7 版本适配（双版本线格式 + 特性检测）
@@ -193,7 +194,7 @@ codec: { mode: "strict", typeSymbol: "...", schema: restoreRequestSchema(), crea
   - `row.action` order 300：28×28 图标按钮（对齐 ui-workspace 自家 `iconButton` 尺寸），Tooltip 包裹。
   - 两者都只 `deleteStore.set({sessionId, displayTitle})`，确认框统一由 footer 槽渲染（层级结论与 §注意事项第一条相同：foot 槽的 fixed 层才能压过 better-sidebar）。
 - **ui-primitives 用 try/catch require**：`require("@deepseek-ai/dsh-client-ui-primitives")` 在 apply 里做，拿不到就 `ui = null` 走 fallback；它的消费组件只在 0.1.7 槽位存在时才会渲染，所以旧版拿不到也无影响。
-- **ghost/错误反馈**：确认框里失败原因内联展示（运行中拦截、文件锁）；删完但 `live=true` 转为"重启后清除"提示再关闭——语义与旧面板一致。
+- **ghost/错误反馈**：确认框里失败原因内联展示（运行中拦截、文件锁）；`live=true` 的成功删除会先在客户端把行移除/隐藏，再以"日志已删除，重启后彻底清除"提示关闭。
 
 ### 8. DSH 0.2.0 版本适配（peer 兼容闸门 + locate 语义变更）
 
@@ -252,7 +253,7 @@ dsh plugin --profile web add /path/to/dsh-archive-manager   # 安装/重装到�
 **DSH ≥ 0.1.7：**
 1. 侧栏底部**不再**出现"归档"按钮（内置归档管理接管）。
 2. 归档筛选视图里，行尾悬停出现 🗑、"…" 菜单出现"删除会话…"红行（非归档行不出现）。
-3. 删除走二次确认框：取消 / Esc / 失败原因 / ghost 提示 / 成功后行消失都正常。
+3. 删除走二次确认框：取消 / Esc / 失败原因 / ghost 提示 / 成功后行**立即**消失（无需重启）都正常。
 
 ## 发布
 
@@ -265,3 +266,4 @@ dsh plugin --profile web add /path/to/dsh-archive-manager   # 安装/重装到�
 - `cordis.patch.yml` 顶层是一个 patch 数组：`- insert:` 用于新增行，`- id:` 用于覆盖已有行。
 - `client.js` 用 `require("react")`（bundle 的模块表提供），**不要** `import` 或动态插件的 `styles`/`host` 全局。
 - 删除是**永久性**的（日志文件不可恢复），UI 里已加二次确认。
+- **DSH 会话列表是 live-preferred**：`sessionQuery.listSessions()` 会把 `ctx.sessions.list()` 里所有活会话合并进 `session/list`，即使日志文件已被删除。所以"永久删除"只删文件**不会**让侧栏行消失；必须从客户端会话目录移除（`sessions.handleSessionRemoved`，0.2.x 的运行时内部入口，不在公开 `ISessions` 契约里）或用 `[data-row-key="session:<id>"]` CSS 隐藏（0.1.x 兜底）。ghost 不是"删失败"——文件确实没了，只是宿主仍持有活会话对象。

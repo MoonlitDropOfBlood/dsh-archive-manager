@@ -89,31 +89,25 @@ jobs:
           prerelease: false
           generate_release_notes: true
           body: |
-            ## ${{ github.ref_name }} — 修复「删除会话必须重启 dsh」
+            ## ${{ github.ref_name }} — 删除会话后侧栏行立即消失
 
-            ### 🐛 修复（#2）
-            - **点「永久删除」没反应、必须重启 DSH 后再删一次**：客户端把 `remote.*()` 的返回值当成业务结果用，但 DSH 的 client connection 外面还包了一层 RPC 信封，实际拿到的是**双层** `{ ok:true, value:{ ok:true, value:{…} } }`。旧代码只判外层 `res.ok`（传输成功永远为 true），于是：
-              - `delete()` 的 `res.value.live` 恒为 `undefined` → 确认框静默关闭，用户以为失败；
-              - `state()` 的 `res.value.ghostIds` 恒为 `undefined` → ghost 行不隐藏，删除按钮继续显示；
-              - `agent-running` / `delete-failed` / `locate-unavailable` 等业务失败原因全部被吞掉。
-              新增 `unwrapRemoteResult()` 只在内层对象自带 boolean `ok` 时剥壳，业务 payload 原样返回；`state` / `delete` / 旧面板 `restore|delete` 三处统一走它。
-            - **live 会话定位**：`sessions.get(id)` 非空时直接用活会话自身 header（不再全量扫描语料）；非 live 才走 `findHeader()`。
-            - **`sessionPersistence.list()` 快照解析**：DSH ≥ 0.1.7 返回 `{ header, formatStatus }` 快照，旧回退按裸 header 查找永远落空，已兼容两种形状。
-            - **Windows 瞬时文件锁**：`rm` 重试提升到 5 次 / 250ms。
-            - **归档集合自愈**：ghost 条目在重启后由 `state()` 触发每进程一次的清理（列举失败则整批保留，不猜删）。
-            - 删除确认框的 ghost 文案改为「侧栏条目会在重启 DSH 后消失（无需再次删除）」。
+            ### 🐛 修复
+            - **永久删除后会话仍留在侧栏**：DSH 的会话列表是 live-preferred——删掉日志文件并不会销毁宿主内存里的 Session 对象，`session/list` 仍会把它合并进列表，所以「仅显示已归档」视图会一直显示该行直到重启。
+              - **0.2.x**：删除成功后先结算在途的 `session/list` 拉取，再调用客户端 `sessions.handleSessionRemoved(id)`（shell 处理 `api-session/removed` 的同一入口）立即把行从浏览器会话目录移除；分组、空态同步正确。
+              - **0.1.x（无该入口）**：按 ghost id 注入 `[data-row-key="session:<id>"]{display:none}` CSS 兜底。
+              - `sessions.list` 每次变化重扫 ghost 集合，reconnect 重新拉取也不会让行复活。
+            - ghost 确认框文案改为「侧栏条目已移除，重启 DSH 后彻底清除」。
 
             ### 🧪 测试
-            - `verify-client-apply.mjs` 新增信封剥离单测（单层/双层/裸 payload/业务失败/网关失败/nullish），fake remote 改为真实双层线形。
-            - `verify-real-install.mjs` 新增 4 条用例：live 会话自身 header + 保留 ghost 条目、`{ header }` 快照解析、stale 条目清理、列举失败不清理。
-            - 真机 headless 客户端实测：修复前 ghost 行仍显示 🗑；修复后该行删除入口消失。
+            - `verify-client-apply.mjs` 新增 ghost 行 CSS 生成、`refresh()` 先于目录移除、目录移除幂等、无入口兜底等断言；`npm run verify` 全绿。
+            - 真实 DSH 0.2.2-rc.5 + headless 客户端实测：archived-only 视图里已删除的 ghost 行不再出现在 DOM（不是仅靠 CSS 隐藏）。
 
             ### 📦 安装（标准 DSH bundle）
             ```bash
-            dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/${{ github.ref_name }}/duke-dsh-plugins-dsh-archive-manager-1.5.4.tgz
+            dsh plugin --profile web add https://github.com/MoonlitDropOfBlood/dsh-archive-manager/releases/download/${{ github.ref_name }}/duke-dsh-plugins-dsh-archive-manager-1.5.5.tgz
             # 重启 DSH 后生效
             ```
-            > 注意：npm 包名带 scope，`npm pack` 产物文件名是 `duke-dsh-plugins-dsh-archive-manager-1.5.4.tgz`（不带 `v`），若链接 404 请以 Release 附件实际文件名为准。
+            > 注意：npm 包名带 scope，`npm pack` 产物文件名是 `duke-dsh-plugins-dsh-archive-manager-1.5.5.tgz`（不带 `v`），若链接 404 请以 Release 附件实际文件名为准。
           files: artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}

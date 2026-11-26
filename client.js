@@ -268,6 +268,111 @@ window.__ModuleLoader__.load({
       return current;
     }
 
+    /**
+     * Escape one value for use inside a CSS double-quoted attribute selector.
+     * Session ids are normally plain (`session-<uuid>`), but IM/remote ids can
+     * carry punctuation; escaping keeps the generated rule valid.
+     *
+     * @param {unknown} value - raw attribute value.
+     * @returns {string} escaped value.
+     */
+    function escapeCssAttribute(value) {
+      return String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    }
+
+    /**
+     * Build the stylesheet that hides deleted-but-resident sidebar rows.
+     *
+     * The shell renders each Session row with `data-row-key="session:<id>"`.
+     * While the Host still lists a live Session whose log this plugin deleted
+     * (a ghost), the row would otherwise stay in the sidebar until the next
+     * DSH restart. This rule is the version-agnostic fallback: it also works
+     * on 0.1.x, whose client catalog has no removal entry point.
+     *
+     * @param {readonly string[]} ids - ghost Session ids.
+     * @returns {string} zero or one CSS rule (empty when nothing is hidden).
+     */
+    function ghostRowCss(ids) {
+      const values = Array.isArray(ids)
+        ? ids.filter((id) => typeof id === "string" && id.length > 0)
+        : [];
+      if (values.length === 0) return "";
+      const selectors = values.map((id) => `[data-row-key="session:${escapeCssAttribute(id)}"]`);
+      return selectors.join(",") + "{display:none!important;}";
+    }
+
+    /**
+     * Drop one permanently deleted Session from the browser's Session catalog.
+     *
+     * Removing the log does not remove the Session object from the Host's
+     * memory, and DSH's Session list is live-preferred: `session/list` merges
+     * every `ctx.sessions.list()` entry, so the sidebar keeps the row (and the
+     * "仅显示已归档" view keeps showing it) until the DSH process restarts.
+     * The shell's own removal path for `api-session/removed` is
+     * `sessions.handleSessionRemoved`, so invoking it applies the exact same
+     * local catalog removal. The preceding `refresh()` settles any in-flight
+     * Host pull first; otherwise its late result could re-add the row after
+     * this removal.
+     *
+     * Both calls are feature-detected: on builds without the internal handler
+     * (for example DSH 0.1.x) the caller falls back to the CSS row hide and the
+     * old restart-based cleanup.
+     *
+     * @param {object|undefined} sessions - the client `ctx.get("sessions")` service.
+     * @param {string} sessionId - deleted Session id.
+     * @returns {Promise<boolean>} whether the catalog removal ran.
+     */
+    async function forgetDeletedSession(sessions, sessionId) {
+      if (!sessions || typeof sessionId !== "string" || sessionId.length === 0) return false;
+      try {
+        if (typeof sessions.refresh === "function") await sessions.refresh();
+      } catch {
+        /* the row removal below still unlists it locally */
+      }
+      if (typeof sessions.handleSessionRemoved !== "function") return false;
+      try {
+        sessions.handleSessionRemoved(sessionId);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    /**
+     * Remove every named Session that the shell's catalog still holds.
+     *
+     * Shared by the per-delete removal and the catalog-change sweep. Only ids
+     * present in `sessions.list.byId` are touched, so a retry (or a Ghost id
+     * that already left the catalog) is a cheap no-op.
+     *
+     * @param {object|undefined} sessions - the client `ctx.get("sessions")` service.
+     * @param {readonly string[]} ids - Session ids to unlist.
+     * @returns {number} how many catalog entries were removed.
+     */
+    function dropGhostsFromCatalog(sessions, ids) {
+      if (!sessions || typeof sessions.handleSessionRemoved !== "function") return 0;
+      if (!Array.isArray(ids) || ids.length === 0) return 0;
+      const list = sessions.list;
+      let snapshot;
+      try {
+        snapshot = list && typeof list.getSnapshot === "function" ? list.getSnapshot() : undefined;
+      } catch {
+        return 0;
+      }
+      if (!snapshot || !snapshot.byId) return 0;
+      let removed = 0;
+      for (const id of ids) {
+        if (typeof id !== "string" || snapshot.byId[id] === undefined) continue;
+        try {
+          sessions.handleSessionRemoved(id);
+          removed += 1;
+        } catch {
+          /* the [data-row-key] rule keeps it hidden */
+        }
+      }
+      return removed;
+    }
+
     async function apply(ctx) {
       // Mount the archiveManager namespace before anything touches it; the
       // mount's lifetime is bound to this plugin's context by $mount itself.
@@ -284,6 +389,17 @@ window.__ModuleLoader__.load({
       legacyStyleTag.textContent = CSS_LEGACY;
       document.head.appendChild(legacyStyleTag);
       ctx.effect(() => () => legacyStyleTag.remove());
+
+      // Dynamic rule that hides the sidebar rows of deleted-but-resident
+      // Sessions (ghosts). On DSH versions whose client catalog exposes the
+      // internal `handleSessionRemoved` entry point, the row is removed from
+      // the catalog outright; this rule is the immediate/visual fallback and
+      // the only mechanism on 0.1.x. The rule is rewritten whenever `state()`
+      // reports a new ghost set.
+      const ghostStyleTag = document.createElement("style");
+      ghostStyleTag.textContent = "";
+      document.head.appendChild(ghostStyleTag);
+      ctx.effect(() => () => ghostStyleTag.remove());
 
       // ctx.get() reads the service without the property-accessor inject
       // guard; it exists because the $mount above just created it.
@@ -316,7 +432,18 @@ window.__ModuleLoader__.load({
         return {
           getSnapshot: () => ids,
           subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
-          set: (next) => { ids = next; for (const fn of listeners) fn(); },
+          set: (next) => {
+            ids = next;
+            ghostStyleTag.textContent = ghostRowCss(next);
+            for (const fn of listeners) fn();
+            // The client catalog is ready by the time a ghost exists (state()
+            // runs after the shell booted), so install the re-add guard here
+            // rather than at apply time, when that service may not exist yet.
+            ensureGhostRowGuard();
+            // The row may already be in the shell's catalog; drop it there too
+            // (no-op when this build has no internal removal entry point).
+            queueMicrotask(dropGhostRowsFromList);
+          },
         };
       })();
       function useGhostIds() { return React.useSyncExternalStore(ghostStore.subscribe, ghostStore.getSnapshot); }
@@ -332,6 +459,54 @@ window.__ModuleLoader__.load({
           ghostStore.set([]);
         }
       }
+
+      /**
+       * Remove every ghost row that the shell's Session catalog still holds.
+       *
+       * The Host keeps a deleted-but-idle Session resident, and `session/list`
+       * re-lists every live Session, so a reconnect (or any Host list refresh)
+       * would otherwise resurrect the row. This sweep runs after a ghost-set
+       * update and on every client catalog change; the CSS rule covers the
+       * brief window before it runs, and remains the only mechanism on builds
+       * whose catalog has no `handleSessionRemoved` entry point.
+       */
+      function dropGhostRowsFromList() {
+        let sessions;
+        try { sessions = ctx.get("sessions"); } catch { return; }
+        dropGhostsFromCatalog(sessions, ghostStore.getSnapshot());
+      }
+
+      // Re-apply the removal whenever the client catalog changes: a reconnect
+      // re-pulls `session/list`, and the Host still lists the resident ghost.
+      // Installed lazily (on the first ghost report) so the catalog service is
+      // surely registered; apply-time activation order is not guaranteed.
+      let ghostRowGuardInstalled = false;
+      function ensureGhostRowGuard() {
+        if (ghostRowGuardInstalled) return;
+        let sessions;
+        try { sessions = ctx.get("sessions"); } catch { return; }
+        const list = sessions && sessions.list;
+        if (!sessions || typeof sessions.handleSessionRemoved !== "function"
+          || !list || typeof list.subscribe !== "function") return;
+        ghostRowGuardInstalled = true;
+        let scheduled = false;
+        const schedule = () => {
+          if (scheduled) return;
+          scheduled = true;
+          queueMicrotask(() => {
+            scheduled = false;
+            dropGhostRowsFromList();
+          });
+        };
+        ctx.effect(() => {
+          const dispose = list.subscribe(schedule);
+          return () => {
+            ghostRowGuardInstalled = false;
+            if (typeof dispose === "function") dispose();
+          };
+        });
+      }
+      ensureGhostRowGuard();
 
       // ---- Modern (DSH >= 0.1.7) mode state --------------------------------
       // modernStore flips on exactly when the built-in archive's row slots
@@ -546,10 +721,12 @@ window.__ModuleLoader__.load({
             const res = unwrapRemoteResult(await remote[action]({ sessionId }));
             if (res && res.ok) {
               if (action === "delete") {
-                try {
-                  const sessions = ctx.get("sessions");
-                  if (sessions && typeof sessions.refresh === "function") sessions.refresh();
-                } catch { /* non-fatal */ }
+                // The log is gone, but a live Session object still makes the
+                // shell list its row; drop it from the client catalog so the
+                // deletion is visible immediately.
+                let sessions;
+                try { sessions = ctx.get("sessions"); } catch { sessions = undefined; }
+                await forgetDeletedSession(sessions, sessionId);
                 refreshState();
               }
             } else {
@@ -802,14 +979,19 @@ window.__ModuleLoader__.load({
             // the row in place until the next DSH restart (issue #2).
             const res = unwrapRemoteResult(await remote.delete({ sessionId: req.sessionId }));
             if (res && res.ok) {
-              try {
-                const sessions = ctx.get("sessions");
-                if (sessions && typeof sessions.refresh === "function") sessions.refresh();
-              } catch { /* non-fatal */ }
+              const live = !!(res.value && res.value.live);
+              // The log is gone, but a live Session object still makes the
+              // shell list its row; drop it from the client catalog so the
+              // deletion is visible immediately (and settle an in-flight Host
+              // list pull first — see forgetDeletedSession).
+              let sessions;
+              try { sessions = ctx.get("sessions"); } catch { sessions = undefined; }
+              await forgetDeletedSession(sessions, req.sessionId);
               refreshState();
-              if (res.value && res.value.live) {
-                // Live-but-idle: files are gone, the archive entry stays as a
-                // ghost until restart (same semantics as the legacy panel).
+              if (live) {
+                // Live-but-idle: files are gone and the row is now unlisted;
+                // the archive entry stays as a ghost until the Host prunes it
+                // on restart.
                 setGhost(true);
               } else {
                 onClose();
@@ -841,7 +1023,7 @@ window.__ModuleLoader__.load({
             React.createElement(
               "div", { className: "am-confirm-body" },
               ghost
-                ? "日志文件已删除。该会话仍驻留在 DSH 内存中，侧栏条目会在重启 DSH 后消失（无需再次删除）。"
+                ? "日志文件已删除，侧栏条目已移除。该会话仍驻留在 DSH 内存中，重启 DSH 后彻底清除（无需再次删除）。"
                 : "将永久删除「" + title + "」的会话日志文件，此操作不可恢复。"
             ),
             error && !ghost
@@ -984,7 +1166,7 @@ window.__ModuleLoader__.load({
     // Exposed for verify-client-apply.mjs: the transport-envelope unwrapping
     // that every Remote result goes through is pure and cheap to test, and a
     // regression there silently turns delete/state into no-ops.
-    exports.__test = { unwrapRemoteResult };
+    exports.__test = { unwrapRemoteResult, ghostRowCss, forgetDeletedSession, dropGhostsFromCatalog };
     return module.exports;
   },
 });

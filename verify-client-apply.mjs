@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Smoke-run the client half's apply() with stubbed DSH services:
- *   - $mount + both style tags install/teardown,
+ *   - $mount + all three style tags install/teardown,
  *   - exactly three slot injects register (footer.action, and the two 0.1.7
  *     archive row lists),
  *   - invoking each inject callback performs its ctx.slots.register() with
@@ -100,6 +100,65 @@ if (typeof unwrapRemoteResult !== "function") {
   expect(unwrapRemoteResult(null) === null && unwrapRemoteResult(undefined) === undefined, "unwrap: nullish results pass through");
 }
 
+// The delete path now unlists the row from the shell's Session catalog. These
+// helpers are pure/feature-detected so this smoke test can drive them without
+// React or a live client.
+const ghostRowCss = clientExports.__test && clientExports.__test.ghostRowCss;
+const forgetDeletedSession = clientExports.__test && clientExports.__test.forgetDeletedSession;
+const dropGhostsFromCatalog = clientExports.__test && clientExports.__test.dropGhostsFromCatalog;
+if (typeof ghostRowCss !== "function" || typeof forgetDeletedSession !== "function" || typeof dropGhostsFromCatalog !== "function") {
+  fail("client exports the ghost-row helpers", new Error("ghostRowCss/forgetDeletedSession/dropGhostsFromCatalog missing"));
+} else {
+  expect(ghostRowCss([]) === "", "ghostRowCss: no ghosts -> no rule");
+  expect(
+    ghostRowCss(["session-a", "session-b"]) ===
+      '[data-row-key="session:session-a"],[data-row-key="session:session-b"]{display:none!important;}',
+    "ghostRowCss: one display-none rule for every ghost id"
+  );
+  expect(
+    ghostRowCss(['a"b']) === '[data-row-key="session:a\\"b"]{display:none!important;}',
+    "ghostRowCss: quotes in a session id are CSS-escaped"
+  );
+
+  const events = [];
+  const sessions = {
+    async refresh() { events.push("refresh"); },
+    handleSessionRemoved(id) { events.push("remove:" + id); },
+  };
+  try {
+    const removed = await forgetDeletedSession(sessions, "session-a");
+    expect(
+      removed === true && events.join(" > ") === "refresh > remove:session-a",
+      "forgetDeletedSession: refresh settles before the catalog removal"
+    );
+  } catch (error) {
+    fail("forgetDeletedSession: refresh settles before the catalog removal", error);
+  }
+  expect(
+    await forgetDeletedSession({}, "session-a") === false,
+    "forgetDeletedSession: build without the handler returns false"
+  );
+  expect(
+    await forgetDeletedSession(undefined, "session-a") === false,
+    "forgetDeletedSession: no sessions service returns false"
+  );
+
+  const removedIds = [];
+  const catalog = {
+    list: { getSnapshot: () => ({ byId: { "session-a": {}, "session-b": {} } }) },
+    handleSessionRemoved(id) { removedIds.push(id); },
+  };
+  const dropped = dropGhostsFromCatalog(catalog, ["session-a", "session-missing"]);
+  expect(
+    dropped === 1 && removedIds.join(",") === "session-a",
+    "dropGhostsFromCatalog: only catalogued ids are removed"
+  );
+  expect(
+    dropGhostsFromCatalog({}, ["session-a"]) === 0,
+    "dropGhostsFromCatalog: build without the handler removes nothing"
+  );
+}
+
 // --- fake ctx --------------------------------------------------------------
 const injects = [];
 const registrations = [];
@@ -154,8 +213,9 @@ try {
   process.exit(1);
 }
 
-expect(styleTags.length === 2, "two style tags installed (common + legacy)");
-expect(disposers.length === 2, "both style tags have teardown effects");
+expect(styleTags.length === 3, "three style tags installed (common + legacy + ghost rows)");
+expect(disposers.length === 3, "all three style tags have teardown effects");
+expect(styleTags[2] !== undefined && styleTags[2].textContent === "", "ghost-row CSS starts empty");
 
 const names = injects.map((i) => i.slotName).sort();
 expect(
